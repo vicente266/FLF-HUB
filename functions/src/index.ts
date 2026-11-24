@@ -39,11 +39,20 @@ const userLogger = utils.createLogger('user');
 const webhookLogger = utils.createLogger('crm').scope('webhook');
 
 /** Secrets for connection checks, read only inside handlers that declared them. */
+/**
+ * A secret's value, or undefined when it is not set up yet. Secret Manager can't hold an empty
+ * value, so a connection not configured yet is stored as `-`.
+ */
+const secretOf = (secret: { value(): string }) => {
+	const v = secret.value().trim();
+	return v && v !== '-' ? v : undefined;
+};
+
 const secrets = (): connections.Secrets => ({
-	slackWebhookUrl: slackWebhookUrl.value() || undefined,
-	leadWebhookToken: leadWebhookToken.value() || undefined,
-	checklyApiKey: checklyApiKey.value() || undefined,
-	n8nApiKey: n8nApiKey.value() || undefined
+	slackWebhookUrl: secretOf(slackWebhookUrl),
+	leadWebhookToken: secretOf(leadWebhookToken),
+	checklyApiKey: secretOf(checklyApiKey),
+	n8nApiKey: secretOf(n8nApiKey)
 });
 /** Every secret a connection check reads. */
 const checkSecrets = [slackWebhookUrl, leadWebhookToken, checklyApiKey, n8nApiKey];
@@ -261,7 +270,7 @@ export const crmContactWritten = onDocumentWritten(
 		const synced = (x: crm.Contact | null) => (x as any)?.portal?.syncedAt?.toMillis?.();
 		if (synced(c) && synced(c) !== synced(before)) return;
 		if (!before) {
-			await automations.onContactCreated(event.params.id, c, slackWebhookUrl.value() || undefined);
+			await automations.onContactCreated(event.params.id, c, secretOf(slackWebhookUrl));
 		} else if (before.stage !== c.stage) {
 			await automations.onStageChanged(event.params.id, c);
 		}
@@ -279,7 +288,8 @@ export const crmLeadWebhook = onRequest(
 			res.status(405).send('POST only');
 			return;
 		}
-		if (!leadWebhookToken.value() || req.get('x-flf-token') !== leadWebhookToken.value()) {
+		const token = secretOf(leadWebhookToken);
+		if (!token || req.get('x-flf-token') !== token) {
 			res.status(401).send('Unauthorized');
 			return;
 		}
@@ -320,7 +330,7 @@ export const crmLeadWebhook = onRequest(
 export const automationsDaily = onSchedule(
 	{ schedule: '0 8 * * *', timeZone: 'Europe/Madrid', secrets: [slackWebhookUrl] },
 	async () => {
-		const url = slackWebhookUrl.value() || undefined;
+		const url = secretOf(slackWebhookUrl);
 		await automations.staleContacts(url);
 		await automations.dailyDigest(url);
 		const cleaned = await claude.cleanUp();
