@@ -4,6 +4,7 @@ import { GoogleAuth } from 'google-auth-library';
 import { db } from '../../firestore';
 import { serverTimestamp, str, createLogger } from '../utils';
 import { CATEGORIES, CONNECTORS, connector } from './config';
+import { CONNECTION_COLLECTION, CONNECTOR_URL } from '../mcp/config';
 
 const logger = createLogger('connections');
 export const collection = db.collection('connection');
@@ -99,6 +100,19 @@ async function check(
 				const bq = new BigQuery({ projectId: settings.projectId });
 				const [tables] = await bq.dataset(settings.dataset).getTables();
 				return { status: 'ok', detail: `${tables.length} tables in ${settings.dataset}.` };
+			}
+			case 'claude-connector': {
+				if (!CONNECTOR_URL) {
+					return {
+						status: 'not_configured',
+						detail: 'FLF_CONNECTOR_URL is not set (deploy, then set it).'
+					};
+				}
+				const n = (await db.collection(CONNECTION_COLLECTION).count().get()).data().count;
+				return {
+					status: 'ok',
+					detail: `${n} active connection${n === 1 ? '' : 's'} · ${CONNECTOR_URL}`
+				};
 			}
 			case 'slack': {
 				if (!secrets.slackWebhookUrl)

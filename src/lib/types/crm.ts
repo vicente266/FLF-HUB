@@ -61,7 +61,7 @@ export interface Task {
 	dueAt: unknown;
 	assigneeUid: string;
 	done: boolean;
-	source: 'automation' | 'manual';
+	source: 'automation' | 'manual' | 'claude';
 }
 
 export interface TeamUser {

@@ -19,6 +19,7 @@ import * as automations from './lib/automations/index';
 import * as connections from './lib/connections/index';
 import * as reports from './lib/reports/index';
 import * as health from './lib/health/index';
+import * as claude from './lib/mcp/index';
 
 setGlobalOptions({ maxInstances: 10, region: REGION });
 
@@ -26,6 +27,8 @@ setGlobalOptions({ maxInstances: 10, region: REGION });
 const leadWebhookToken = defineSecret('LEAD_WEBHOOK_TOKEN');
 /** Slack Incoming Webhook URL of the team channel. */
 const slackWebhookUrl = defineSecret('SLACK_WEBHOOK_URL');
+/** Signs the Claude connector's clients and tokens and seals its keys (docs/claude-connector.md). */
+const flfMcpKey = defineSecret('FLF_MCP_KEY');
 
 const userLogger = utils.createLogger('user');
 const webhookLogger = utils.createLogger('crm').scope('webhook');
@@ -42,6 +45,7 @@ const secrets = (): connections.Secrets => ({
  */
 
 export const coreAction = onCall(
+	{ secrets: [flfMcpKey] },
 	dispatch('core', {
 		/** Who the signed-in user is and what they may do; creates their user document on first sign-in. */
 		'user.validate': {
@@ -89,6 +93,32 @@ export const coreAction = onCall(
 				await group.remove(utils.str(p.id, 'id'));
 				return { ok: true };
 			}
+		},
+		/** The Claude consent page: which app asks and where it sends you back. Writes nothing. */
+		'claude.client': {
+			handler: async (p) => claude.describeClient(claude.keys(flfMcpKey.value()), p)
+		},
+		/** Approve a Claude connection: a fresh sign-in and `claude.self.connect` required. */
+		'claude.approve': {
+			handler: async (p, auth) => claude.approveClient(claude.keys(flfMcpKey.value()), p, auth)
+		},
+		/** Your own Claude connections, and the address to connect with. */
+		'claude.connections': {
+			handler: async (_p, auth) => {
+				const { rows, more } = await claude.connections.own(auth);
+				return { connections: rows, more, connectorUrl: claude.CONNECTOR_URL };
+			}
+		},
+		/** End one of your own Claude connections at once. */
+		'claude.disconnect': {
+			handler: async (p, auth) => claude.connections.end(p.id, auth)
+		},
+		/** Every Claude connection in the team, newest first. */
+		'claude.admin.list': { adminOnly: true, handler: async () => claude.connections.all() },
+		/** End anyone's Claude connection. */
+		'claude.admin.revoke': {
+			adminOnly: true,
+			handler: async (p) => claude.connections.revoke(p.id)
 		}
 	})
 );
@@ -240,13 +270,37 @@ export const crmLeadWebhook = onRequest(
 	}
 );
 
-/** Every morning: stale contacts, then the digest. */
+/** Every morning: stale contacts, the digest, and the Claude connector's expired records. */
 export const automationsDaily = onSchedule(
 	{ schedule: '0 8 * * *', timeZone: 'Europe/Madrid', secrets: [slackWebhookUrl] },
 	async () => {
 		const url = slackWebhookUrl.value() || undefined;
 		await automations.staleContacts(url);
 		await automations.dailyDigest(url);
+		const cleaned = await claude.cleanUp();
+		utils.createLogger('claude-connector').log(`clean-up ${JSON.stringify(cleaned)}`);
+	}
+);
+
+/**
+ * The Claude connector (docs/claude-connector.md): OAuth (the Hub is the issuer), the discovery
+ * documents and MCP over streamable HTTP, stateless. Claude acts as the signed-in person.
+ */
+export const claudeMcp = onRequest(
+	{
+		secrets: [flfMcpKey],
+		timeoutSeconds: 60,
+		memory: '512MiB',
+		cpu: 1,
+		concurrency: 40,
+		maxInstances: 5
+	},
+	async (req, res) => {
+		await claude.handle(
+			req as unknown as Parameters<typeof claude.handle>[0],
+			res as unknown as Parameters<typeof claude.handle>[1],
+			claude.keys(flfMcpKey.value())
+		);
 	}
 );
 

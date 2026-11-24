@@ -8,6 +8,7 @@ import Plug from '@lucide/svelte/icons/plug';
 import HeartPulse from '@lucide/svelte/icons/heart-pulse';
 import UserCog from '@lucide/svelte/icons/user-cog';
 import Shield from '@lucide/svelte/icons/shield';
+import Sparkles from '@lucide/svelte/icons/sparkles';
 
 export interface NavItem {
 	href: string;
@@ -48,7 +49,8 @@ export const NAVIGATION: NavSection[] = [
 				icon: Plug,
 				permission: 'connections.any.read'
 			},
-			{ href: '/health', label: 'Health', icon: HeartPulse, permission: 'health.any.read' }
+			{ href: '/health', label: 'Health', icon: HeartPulse, permission: 'health.any.read' },
+			{ href: '/claude', label: 'Claude', icon: Sparkles }
 		]
 	},
 	{

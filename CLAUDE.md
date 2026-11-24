@@ -30,6 +30,10 @@ Route in `src/routes/(app)/<feature>/`, UI in `src/lib/components/<feature>/`, t
 - **A new automation** = an entry in `automations/config.ts` and its body wrapped in `run()` so
   its on/off switch, run count and errors are recorded.
 
+- **Claude can do what the screens do.** A new feature gets its connector tools in the same change
+  (`functions/src/lib/mcp/tools.ts`): reads check the screen's permission and `audit`, writes go
+  through the screen's action with `act()`. See `docs/claude-connector.md`.
+
 ## Frontend
 
 - Svelte 5 runes only. Calls through `callAction('<feature>:<action>')` from `$lib/actions`.

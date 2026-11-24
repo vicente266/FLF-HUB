@@ -190,12 +190,31 @@ export const CONNECTORS: Connector[] = [
 		testable: false
 	},
 	{
-		id: 'claude',
-		name: 'Claude (Anthropic)',
+		id: 'claude-connector',
+		name: 'Claude connector (MCP)',
+		category: 'ai',
+		availability: 'live',
+		description:
+			'Lets each person use the Hub from Claude (claude.ai, Claude Code): read and manage contacts, tasks, reports, automations and connections, with their own permissions. Changes show as "via Claude".',
+		feeds: ['CRM', 'Tasks', 'Reports', 'Automations', 'Connections', 'Health'],
+		secrets: ['FLF_MCP_KEY'],
+		settings: [],
+		setup: [
+			'Developer only: `openssl rand -base64 48 | firebase functions:secrets:set FLF_MCP_KEY --data-file=-`, then deploy.',
+			'Developer only: put the `claudeMcp` URL + `/mcp` in `functions/.env` as FLF_CONNECTOR_URL and deploy again.',
+			'Admin: give the people who may use Claude a group with "Claude — connect" (admins too).',
+			'claude.ai: an Owner adds it under Organization settings → Connectors → Add custom connector with that address; each person then clicks Connect.',
+			'Claude Code: `claude mcp add --transport http --scope user flf-hub <address>`, then `/mcp` to sign in.'
+		],
+		testable: true
+	},
+	{
+		id: 'claude-api',
+		name: 'Claude AI features (Anthropic API)',
 		category: 'ai',
 		availability: 'planned',
 		description:
-			'Summarises applications, drafts follow-ups and answers questions about the pipeline, like the AI tools in the EBS Hub.',
+			'AI inside the Hub itself: summarise applications, draft follow-ups, score fit, like the AI tools in the EBS Hub.',
 		feeds: ['CRM', 'Reports'],
 		secrets: ['ANTHROPIC_API_KEY'],
 		settings: [],

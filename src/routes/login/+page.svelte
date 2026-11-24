@@ -19,12 +19,18 @@
 	let info = $state<string | null>(null);
 	let busy = $state(false);
 
+	/** Where to go after signing in: a path on this site only, never another origin. */
+	function target(): string {
+		const next = new URLSearchParams(location.search).get('next') ?? '/';
+		return next.startsWith('/') && !next.startsWith('//') ? next : '/';
+	}
+
 	onMount(() => {
 		if (new URLSearchParams(location.search).get('invalid') === '1') {
 			error = 'Your account is not approved yet. Ask an admin to give you access.';
 		}
 		return onAuthStateChanged(auth, (u) => {
-			if (u && !error) goto('/');
+			if (u && !error) goto(target());
 		});
 	});
 
@@ -34,7 +40,7 @@
 		error = null;
 		try {
 			await signInWithEmailAndPassword(auth, email.trim(), password);
-			goto('/');
+			goto(target());
 		} catch {
 			error = 'Wrong email or password.';
 		} finally {
@@ -46,7 +52,7 @@
 		error = null;
 		try {
 			await signInWithPopup(auth, new GoogleAuthProvider());
-			goto('/');
+			goto(target());
 		} catch {
 			error = 'Google sign-in failed. Please try again.';
 		}

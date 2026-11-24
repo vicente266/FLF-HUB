@@ -1,6 +1,7 @@
 import { HttpsError } from 'firebase-functions/v2/https';
 import { db } from '../../firestore';
 import { serverTimestamp, str, oneOf } from '../utils';
+import { callVia } from '../call-context';
 import {
 	CONTACT_TYPES,
 	PIPELINES,
@@ -40,7 +41,11 @@ export interface Contact {
 
 export type ActivityKind = 'created' | 'note' | 'stage' | 'assigned' | 'automation' | 'updated';
 
-const who = (auth: any) => auth?.token?.name || auth?.token?.email || 'System';
+/** Who did it, as the timeline shows it; marked "via Claude" when the connector made the call. */
+const who = (auth: any) => {
+	const name = auth?.token?.name || auth?.token?.email || 'System';
+	return callVia() === 'claude' ? `${name} · via Claude` : name;
+};
 
 export function config() {
 	return { types: CONTACT_TYPES, sources: SOURCES, pipelines: PIPELINES, staleDays: STALE_DAYS };
@@ -56,7 +61,14 @@ export async function logActivity(
 ): Promise<void> {
 	const ref = contacts.doc(contactId);
 	const batch = db.batch();
-	batch.set(ref.collection('activity').doc(), { kind, text, by, at: serverTimestamp(), ...extra });
+	batch.set(ref.collection('activity').doc(), {
+		kind,
+		text,
+		by,
+		via: callVia() ?? 'hub',
+		at: serverTimestamp(),
+		...extra
+	});
 	batch.update(ref, { lastActivityAt: serverTimestamp(), needsAttention: false });
 	await batch.commit();
 }
@@ -204,7 +216,7 @@ export const actions = {
 			dueAt: due,
 			assigneeUid: str(p.assigneeUid, 'assigneeUid', false) || auth.uid,
 			done: false,
-			source: 'manual',
+			source: callVia() === 'claude' ? 'claude' : 'manual',
 			createdAt: serverTimestamp()
 		});
 		return { ok: true };

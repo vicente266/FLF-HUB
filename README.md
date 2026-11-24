@@ -37,7 +37,8 @@ Node 24 (`.nvmrc`), Java 21 for the emulators, `npm i -g firebase-tools`.
 
 ```sh
 npm install && (cd functions && npm install)
-printf 'LEAD_WEBHOOK_TOKEN=local-token\nSLACK_WEBHOOK_URL=\n' > functions/.secret.local
+printf 'LEAD_WEBHOOK_TOKEN=local-token\nSLACK_WEBHOOK_URL=\nFLF_MCP_KEY=%s\n' "$(openssl rand -base64 48)" > functions/.secret.local
+printf 'FLF_HUB_URL=http://localhost:5002\n' > functions/.env.local
 npm run emulators:start            # auth, functions, firestore (+ app on :5002)
 node scripts/seed-emulator.mjs     # admin + sample data
 ```
@@ -62,8 +63,8 @@ cd functions && npm run build
    Email/Password and Google enabled.
 2. Create an App Hosting backend `flf-hub-backend`; store the web config as the
    `VITE_FIREBASE_*` secrets listed in `apphosting.yaml`.
-3. `firebase functions:secrets:set LEAD_WEBHOOK_TOKEN` and `SLACK_WEBHOOK_URL`
-   (an empty value is fine until Slack is set up).
+3. `firebase functions:secrets:set LEAD_WEBHOOK_TOKEN`, `SLACK_WEBHOOK_URL` (empty is fine until
+   Slack is set up) and `FLF_MCP_KEY` (see `docs/claude-connector.md`).
 4. `firebase deploy`.
 5. Sign in once, then in the Firestore console set your `user/{uid}.role` to `admin`, sign out
    and in. Create the groups (Default, Sherpas, Operations) in Admin → Groups.

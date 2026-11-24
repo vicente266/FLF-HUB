@@ -14,3 +14,4 @@ vite.config.ts.timestamp-*
 functions/lib
 functions/.secret.local
 .claude/settings.local.json
+functions/.env.local

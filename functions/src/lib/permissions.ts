@@ -13,7 +13,9 @@ export const PERMISSIONS = [
 	'automations.any.write',
 	'connections.any.read',
 	'connections.any.write',
-	'health.any.read'
+	'health.any.read',
+	// Connect Claude to the Hub (the MCP connector). No admin bypass: admins need it too.
+	'claude.self.connect'
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];

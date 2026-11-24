@@ -16,7 +16,8 @@
 			checking = true;
 			me.set(null);
 			if (!user) {
-				goto('/login');
+				// Back to this page after signing in (the Claude consent page needs it).
+				goto(`/login?next=${encodeURIComponent(location.pathname + location.search)}`);
 				return;
 			}
 			try {

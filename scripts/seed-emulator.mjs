@@ -45,7 +45,8 @@ const GROUPS = {
 			'automations.any.write',
 			'connections.any.read',
 			'connections.any.write',
-			'health.any.read'
+			'health.any.read',
+			'claude.self.connect'
 		]
 	}
 };

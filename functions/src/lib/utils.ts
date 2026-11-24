@@ -1,9 +1,17 @@
 import admin from 'firebase-admin';
 import { HttpsError } from 'firebase-functions/v2/https';
 import * as user from './user';
+import { callContext } from './call-context';
 
-/** Admins pass every check; everyone else needs the permission through one of their groups. */
+/**
+ * Admins pass every check; everyone else needs the permission through one of their groups. Inside a
+ * connector call, the role and permissions it already read are used instead of reading them again.
+ */
 export const hasPermission = async (auth: any, permission: string): Promise<boolean> => {
+	const ctx = callContext();
+	if (ctx && ctx.uid === auth?.uid) {
+		return ctx.role === 'admin' || ctx.permissions.includes(permission);
+	}
 	if (auth?.token?.role === 'admin') return true;
 	return user.hasPermission(auth.uid, permission);
 };
