@@ -46,7 +46,9 @@ const GROUPS = {
 			'connections.any.read',
 			'connections.any.write',
 			'health.any.read',
-			'claude.self.connect'
+			'claude.self.connect',
+			'wellbeing.any.read',
+			'wealth.any.read'
 		]
 	}
 };
@@ -66,23 +68,23 @@ async function user(email, name, role, groups, sherpa) {
 }
 
 const CONTACTS = [
-	['fellow', 'Lucía Martín', 'lucia@nimbuslabs.io', 'Nimbus Labs', 'lead', 'website', 1],
-	['fellow', 'Tomás Ribeiro', 'tomas@fieldwise.ai', 'Fieldwise', 'screening', 'referral', 4],
-	['fellow', 'Amara Okafor', 'amara@payloop.co', 'Payloop', 'interview', 'event', 9],
-	['fellow', 'Jonas Becker', 'jonas@gridly.de', 'Gridly', 'offer', 'referral', 20],
+	['fellow', 'Lucía Martín', 'lucia@nimbuslabs.io', 'Nimbus Labs', 'application', 'website', 1],
+	['fellow', 'Tomás Ribeiro', 'tomas@fieldwise.ai', 'Fieldwise', 'target', 'referral', 4],
+	['fellow', 'Amara Okafor', 'amara@payloop.co', 'Payloop', 'aware', 'event', 9],
+	['fellow', 'Jonas Becker', 'jonas@gridly.de', 'Gridly', 'teaser', 'referral', 20],
 	['fellow', 'Sofía Herrera', 'sofia@kelp.bio', 'Kelp Bio', 'fellow', 'website', 40],
-	['fellow', 'Marc Dubois', 'marc@stackr.fr', 'Stackr', 'lead', 'website', 18],
+	['fellow', 'Marc Dubois', 'marc@stackr.fr', 'Stackr', 'application', 'website', 18],
 	['guru', 'Elena Vidal', 'elena@growthcraft.com', 'Growthcraft', 'conversation', 'referral', 6],
 	['guru', 'Peter Lindqvist', 'peter@exitpath.se', 'ExitPath', 'active', 'event', 60],
 	['investor', 'Rachel Kim', 'rachel@northstar.vc', 'Northstar Ventures', 'intro', 'event', 3],
 	['investor', 'Diego Alonso', 'diego@kapital.es', 'Kapital Seed', 'roster', 'referral', 50]
 ];
 const STAGES = {
-	fellow: ['lead', 'screening', 'interview', 'offer', 'fellow', 'declined'],
+	fellow: ['application', 'target', 'aware', 'teaser', 'fellow', 'lost'],
 	guru: ['prospect', 'conversation', 'onboarding', 'active', 'declined'],
 	investor: ['prospect', 'intro', 'engaged', 'roster', 'declined']
 };
-const FINAL = ['fellow', 'active', 'roster', 'declined'];
+const FINAL = ['fellow', 'lost', 'active', 'roster', 'declined'];
 
 for (const [id, g] of Object.entries(GROUPS)) await db.doc(`group/${id}`).set(g);
 const me = await user(

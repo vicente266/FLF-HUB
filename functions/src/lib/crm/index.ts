@@ -32,6 +32,19 @@ export interface Contact {
 	tags: string[];
 	notes: string;
 	needsAttention: boolean;
+	/** What the portal sheet says, when the contact came from it (read-only copy). */
+	portal?: {
+		from: string;
+		cohort: string | null;
+		pledgeSigned: boolean | null;
+		sherpaName: string | null;
+		nextStep: string | null;
+		scoring: string | null;
+		reasonLost: string | null;
+		sheetNotes: string | null;
+		syncedAt: FirebaseFirestore.Timestamp;
+		[k: string]: unknown;
+	};
 	stageChangedAt: FirebaseFirestore.Timestamp;
 	lastActivityAt: FirebaseFirestore.Timestamp;
 	createdAt: FirebaseFirestore.Timestamp;
@@ -263,8 +276,10 @@ export const actions = {
 		if (!t.exists) throw new HttpsError('not-found', 'Task not found.');
 		const done = p.done !== false;
 		await ref.update({ done, doneAt: done ? serverTimestamp() : null });
-		if (done)
+		// Tasks imported from the portal sheet belong to no contact.
+		if (done && t.data()?.contactId) {
 			await logActivity(t.data()?.contactId, 'note', `Task done: ${t.data()?.title}`, who(auth));
+		}
 		return { ok: true };
 	}
 };

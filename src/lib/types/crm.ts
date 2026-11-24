@@ -41,6 +41,23 @@ export interface Contact {
 	tags: string[];
 	notes: string;
 	needsAttention: boolean;
+	/** The portal sheet's view, when the contact was imported from it. */
+	portal?: {
+		from: string;
+		cohort: string | null;
+		pledgeSigned: boolean | null;
+		pledgeDate: unknown;
+		companyUrl: string | null;
+		location: string | null;
+		sherpaName: string | null;
+		archetype: string | null;
+		funnelStage: string | null;
+		nextStep: string | null;
+		scoring: string | null;
+		reasonLost: string | null;
+		sheetNotes: string | null;
+		syncedAt: unknown;
+	};
 	stageChangedAt: unknown;
 	lastActivityAt: unknown;
 	createdAt: unknown;
@@ -56,13 +73,15 @@ export interface Activity {
 
 export interface Task {
 	id: string;
-	contactId: string;
-	contactName: string;
+	/** Null for team tasks imported from the portal sheet. */
+	contactId: string | null;
+	contactName: string | null;
+	ownerName?: string;
 	title: string;
 	dueAt: unknown;
 	assigneeUid: string;
 	done: boolean;
-	source: 'automation' | 'manual' | 'claude';
+	source: 'automation' | 'manual' | 'claude' | 'portal';
 }
 
 export interface TeamUser {

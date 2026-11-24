@@ -78,6 +78,16 @@
 			await callAction('connections:settings.save', { id: c.id, settings: drafts[c.id] });
 			if (c.testable) await callAction('connections:test', { id: c.id }, { timeout: 120_000 });
 		});
+	/** The last portal dry run or import, shown under its card. */
+	let portalResult = $state<Record<string, unknown> | null>(null);
+	const portal = (action: 'sync.plan' | 'sync.run') =>
+		run(`portal:${action}`, async () => {
+			portalResult = await callAction<Record<string, unknown>>(
+				`portal:${action}`,
+				{},
+				{ timeout: 300_000 }
+			);
+		});
 	const syncSheets = () =>
 		run('sync', () => callAction('connections:sheets.sync', {}, { timeout: 300_000 }));
 
@@ -223,12 +233,36 @@
 													/> Test
 												</button>
 											{/if}
+											{#if c.id === 'portal-sheet' && canWrite}
+												<button
+													class="btn-ghost"
+													disabled={busy !== null}
+													onclick={() => portal('sync.plan')}
+												>
+													Dry run
+												</button>
+												<button
+													class="btn-ghost"
+													disabled={busy !== null}
+													onclick={() => portal('sync.run')}
+												>
+													Sync now
+												</button>
+											{/if}
 											{#if c.id === 'google-sheets' && canWrite}
 												<button class="btn-ghost" disabled={busy !== null} onclick={syncSheets}>
 													Sync now
 												</button>
 											{/if}
 										</div>
+										{#if c.id === 'portal-sheet' && portalResult}
+											<pre
+												class="max-h-60 overflow-auto rounded-lg bg-canvas px-3 py-2 text-[11px]">{JSON.stringify(
+													portalResult,
+													null,
+													1
+												)}</pre>
+										{/if}
 									{:else}
 										<p class="rounded-lg bg-canvas px-3 py-2 text-xs text-ink-soft">
 											Planned. It will feed {c.feeds.join(', ')} once built.

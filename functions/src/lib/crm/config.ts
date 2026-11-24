@@ -31,14 +31,30 @@ export const PIPELINES: Record<ContactType, Pipeline> = {
 	fellow: {
 		label: 'Fellow',
 		plural: 'Fellows',
-		description: 'Founders who apply to join the Fellowship.',
+		description:
+			'Founders, from application or target to Fellow. The stages of the portal’s CRM sheet (Targets, FOF – They are Aware, FOF – Teaser Received, Fellows, Lost).',
 		stages: [
-			{ id: 'lead', label: 'Lead', followUpDays: 2, followUp: 'First reply to the applicant' },
-			{ id: 'screening', label: 'Screening', followUpDays: 5, followUp: 'Finish screening' },
-			{ id: 'interview', label: 'Interview', followUpDays: 7, followUp: 'Decide after interview' },
-			{ id: 'offer', label: 'Offer', followUpDays: 7, followUp: 'Follow up on the pledge' },
-			{ id: 'fellow', label: 'Fellow', final: true },
-			{ id: 'declined', label: 'Declined', final: true }
+			{
+				id: 'application',
+				label: 'Applications',
+				followUpDays: 3,
+				followUp: 'Review the application'
+			},
+			{ id: 'target', label: 'Targets', followUpDays: 7, followUp: 'Plan the first interaction' },
+			{
+				id: 'aware',
+				label: 'FOF – They are Aware',
+				followUpDays: 7,
+				followUp: 'Send the teaser'
+			},
+			{
+				id: 'teaser',
+				label: 'FOF – Teaser Received',
+				followUpDays: 7,
+				followUp: 'Follow up on the teaser'
+			},
+			{ id: 'fellow', label: 'Fellows', final: true },
+			{ id: 'lost', label: 'Lost', final: true }
 		]
 	},
 	guru: {

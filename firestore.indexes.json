@@ -175,6 +175,20 @@
 					"order": "DESCENDING"
 				}
 			]
+		},
+		{
+			"collectionGroup": "wellbeing",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "contactId",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "completedAt",
+					"order": "DESCENDING"
+				}
+			]
 		}
 	],
 	"fieldOverrides": []

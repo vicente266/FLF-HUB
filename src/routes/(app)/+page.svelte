@@ -98,9 +98,13 @@
 						<li class="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
 							<div class="min-w-0">
 								<div class="truncate font-medium">{t.title}</div>
-								<a href="/crm/{t.contactId}" class="text-xs text-ink-soft hover:text-primary-700">
-									{t.contactName}
-								</a>
+								{#if t.contactId}
+									<a href="/crm/{t.contactId}" class="text-xs text-ink-soft hover:text-primary-700">
+										{t.contactName}
+									</a>
+								{:else if t.ownerName}
+									<span class="text-xs text-ink-soft">{t.ownerName} · from the portal</span>
+								{/if}
 							</div>
 							<span
 								class="shrink-0 text-xs font-semibold {overdue(t)

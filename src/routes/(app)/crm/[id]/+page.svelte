@@ -26,6 +26,45 @@
 	const cfg = crmConfig();
 	const canWrite = hasPermission('crm.any.write');
 	const canDelete = hasPermission('crm.any.delete');
+	const canWellbeing = hasPermission('wellbeing.any.read');
+	const canWealth = hasPermission('wealth.any.read');
+
+	interface Perma {
+		completedAt: number | null;
+		scores: Record<string, number | null>;
+	}
+	interface Finance {
+		startingIncome?: number | null;
+		currentIncome?: number | null;
+		growth?: string;
+		reports?: Record<string, Record<string, { gross: number; net: number; value: number }>>;
+		syncedAt?: number | null;
+	}
+	let perma = $state<Perma[] | null>(null);
+	let money = $state<Finance | null>(null);
+	const PERMA_KEYS = ['P', 'E', 'R', 'M', 'A', 'N', 'H', 'Loneliness', 'Happiness', 'Overall'];
+	const PERMA_LABEL: Record<string, string> = { Loneliness: 'Lonely', Happiness: 'Happy' };
+	function pledge(p: NonNullable<Contact['portal']>): string | null {
+		if (p.pledgeSigned === null) return null;
+		return p.pledgeSigned ? `Signed ${formatDate(p.pledgeDate)}` : 'Not signed';
+	}
+	const eur = (n: number | null | undefined) =>
+		typeof n === 'number' ? `€${Math.round(n).toLocaleString('en-GB')}` : '—';
+
+	// Restricted data: fetched through their own actions, only for those who may see it.
+	$effect(() => {
+		const cid = id;
+		perma = null;
+		money = null;
+		if (canWellbeing)
+			callAction<Perma[]>('portal:wellbeing.get', { contactId: cid })
+				.then((r) => (perma = r))
+				.catch(() => {});
+		if (canWealth)
+			callAction<Finance | null>('portal:finance.get', { contactId: cid })
+				.then((r) => (money = r))
+				.catch(() => {});
+	});
 
 	let id = $derived(page.params.id ?? '');
 	let contact = $state<Contact | null | undefined>(undefined);
@@ -207,6 +246,31 @@
 					</p>
 				</section>
 
+				{#if c.portal}
+					{@const pt = c.portal}
+					<section class="card px-5 py-4">
+						<div class="flex items-center justify-between">
+							<div class="eyebrow">From the portal</div>
+							<span class="text-xs text-ink-soft">
+								synced {formatDateTime(pt.syncedAt)} · read only
+							</span>
+						</div>
+						<dl class="mt-3 grid grid-cols-3 gap-x-6 gap-y-2 text-sm">
+							{#each [['Next step', pt.nextStep], ['Scoring', pt.scoring], ['Cohort', pt.cohort], ['Pledge', pledge(pt)], ['Sherpa', pt.sherpaName], ['Archetype', pt.archetype], ['Location', pt.location], ['Funnel stage', pt.funnelStage], ['Reason lost', pt.reasonLost]] as [label, value] (label)}
+								{#if value}
+									<div>
+										<dt class="text-xs text-ink-soft">{label}</dt>
+										<dd class="font-medium">{value}</dd>
+									</div>
+								{/if}
+							{/each}
+						</dl>
+						{#if pt.sheetNotes}<p class="mt-3 text-sm whitespace-pre-line text-ink-soft">
+								{pt.sheetNotes}
+							</p>{/if}
+					</section>
+				{/if}
+
 				<!-- Timeline -->
 				<section class="card">
 					<div class="border-b border-line/60 px-5 py-3 font-bold">Timeline</div>
@@ -267,6 +331,59 @@
 						</div>
 					</dl>
 				</section>
+
+				{#if canWellbeing && perma?.length}
+					<section class="card px-4 py-3">
+						<div class="flex items-center justify-between">
+							<span class="font-bold">Wellbeing (PERMA)</span>
+							<span class="text-[11px] text-ink-soft">restricted · not in Claude</span>
+						</div>
+						<p class="mt-1 text-xs text-ink-soft">
+							Latest of {perma.length}, {formatDate(perma[0].completedAt)}
+						</p>
+						<div class="mt-2 grid grid-cols-5 gap-2 text-center">
+							{#each PERMA_KEYS as k (k)}
+								<div class="rounded-lg bg-canvas px-1 py-1.5">
+									<div class="text-[10px] font-bold text-ink-soft">{PERMA_LABEL[k] ?? k}</div>
+									<div class="text-sm font-bold">{perma[0].scores[k] ?? '—'}</div>
+								</div>
+							{/each}
+						</div>
+					</section>
+				{/if}
+
+				{#if canWealth && money}
+					<section class="card px-4 py-3">
+						<div class="flex items-center justify-between">
+							<span class="font-bold">Finances</span>
+							<span class="text-[11px] text-ink-soft">restricted</span>
+						</div>
+						<dl class="mt-2 space-y-1 text-sm">
+							<div class="flex justify-between">
+								<dt class="text-ink-soft">Starting income</dt>
+								<dd>{eur(money.startingIncome)}</dd>
+							</div>
+							<div class="flex justify-between">
+								<dt class="text-ink-soft">Current income</dt>
+								<dd>{eur(money.currentIncome)}</dd>
+							</div>
+							{#if money.growth}<div class="flex justify-between">
+									<dt class="text-ink-soft">Growth</dt>
+									<dd>{money.growth}</dd>
+								</div>{/if}
+						</dl>
+						{#each Object.entries(money.reports ?? {}) as [report, rows] (report)}
+							<div class="mt-2 border-t border-line/50 pt-2 text-xs">
+								<div class="font-semibold">{report}</div>
+								{#each Object.entries(rows) as [kind, t] (kind)}
+									<div class="flex justify-between text-ink-soft">
+										<span>{kind}</span><span>{eur(t.value || t.net || t.gross)}</span>
+									</div>
+								{/each}
+							</div>
+						{/each}
+					</section>
+				{/if}
 
 				<section class="card">
 					<div class="border-b border-line/60 px-4 py-3 font-bold">Tasks</div>

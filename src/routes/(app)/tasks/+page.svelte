@@ -11,6 +11,12 @@
 	setTitle('Tasks', 'Follow-ups from you and from the automations');
 
 	const canWrite = hasPermission('crm.any.write');
+	const SOURCE: Record<string, string> = {
+		automation: 'Automation',
+		claude: 'Via Claude',
+		portal: 'Portal',
+		manual: 'Manual'
+	};
 	let scope = $state<'mine' | 'all'>('mine');
 	let tasks = $state<Task[]>([]);
 	let error = $state<string | null>(null);
@@ -98,12 +104,16 @@
 							/>
 							<div class="min-w-0 flex-1">
 								<div class="font-medium">{t.title}</div>
-								<a href="/crm/{t.contactId}" class="text-xs text-ink-soft hover:text-primary-700">
-									{t.contactName}
-								</a>
+								{#if t.contactId}
+									<a href="/crm/{t.contactId}" class="text-xs text-ink-soft hover:text-primary-700">
+										{t.contactName}
+									</a>
+								{:else if t.ownerName}
+									<span class="text-xs text-ink-soft">{t.ownerName} · from the portal</span>
+								{/if}
 							</div>
 							<span class="text-xs text-ink-soft">
-								{t.source === 'automation' ? 'Automation' : 'Manual'}
+								{SOURCE[t.source] ?? 'Manual'}
 							</span>
 							<span class="w-24 text-right text-xs font-semibold {g.tone}">
 								{formatDate(t.dueAt)}

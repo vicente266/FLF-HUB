@@ -1,7 +1,9 @@
 import { HttpsError } from 'firebase-functions/v2/https';
 import { BigQuery } from '@google-cloud/bigquery';
 import { GoogleAuth } from 'google-auth-library';
+import { readFileSync } from 'fs';
 import { db } from '../../firestore';
+import { useEmulator } from '../../env';
 import { serverTimestamp, str, createLogger } from '../utils';
 import { CATEGORIES, CONNECTORS, connector } from './config';
 import { CONNECTION_COLLECTION, CONNECTOR_URL } from '../mcp/config';
@@ -26,6 +28,22 @@ export interface ConnectionState {
 export interface Secrets {
 	slackWebhookUrl?: string;
 	leadWebhookToken?: string;
+	checklyApiKey?: string;
+	n8nApiKey?: string;
+}
+
+/** `Name | id` lines of a list setting. */
+function pairs(value: string | undefined) {
+	return (value ?? '')
+		.split('\n')
+		.map((line) => line.split('|').map((x) => x.trim()))
+		.filter((p) => p.length === 2 && p[0] && p[1])
+		.map(([name, id]) => ({ name, id }));
+}
+
+/** GET with a timeout; never anything but GET. */
+async function get(url: string, headers: Record<string, string> = {}, ms = 15_000) {
+	return fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(ms) });
 }
 
 async function settingsOf(id: string): Promise<Record<string, string>> {
@@ -41,7 +59,16 @@ export function sheetSources(settings: Record<string, string>) {
 		.map(([name, spreadsheetId, range]) => ({ name, spreadsheetId, range }));
 }
 
-async function readSheet(spreadsheetId: string, range: string): Promise<string[][]> {
+/** A range's values. Read-only scope: the Hub never writes to a sheet. */
+export async function readSheet(spreadsheetId: string, range: string): Promise<string[][]> {
+	// Emulator only: a local JSON file stands in for Google (no credentials locally).
+	if (useEmulator && process.env.SHEETS_FIXTURE) {
+		const fixture = JSON.parse(readFileSync(process.env.SHEETS_FIXTURE, 'utf8')) as Record<
+			string,
+			string[][]
+		>;
+		return fixture[range.replace(/^'|'$/g, '')] ?? [];
+	}
 	const auth = new GoogleAuth({
 		scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly']
 	});
@@ -100,6 +127,104 @@ async function check(
 				const bq = new BigQuery({ projectId: settings.projectId });
 				const [tables] = await bq.dataset(settings.dataset).getTables();
 				return { status: 'ok', detail: `${tables.length} tables in ${settings.dataset}.` };
+			}
+			case 'portal-sheet': {
+				// Lazy: portal imports this module.
+				const portal = await import('../portal/index.js');
+				const tabs = await portal.readAll();
+				const drift = Object.entries(tabs)
+					.filter(([, t]) => t.missing.length)
+					.map(([k, t]) => `${k}: missing ${t.missing.join(', ')}`);
+				const rows = Object.entries(tabs)
+					.map(([k, t]) => `${k} ${t.rows.length}`)
+					.join(' · ');
+				if (drift.length)
+					return { status: 'error', detail: `Columns changed. ${drift.join('; ')}` };
+				return { status: 'ok', detail: `All columns found. Rows: ${rows}` };
+			}
+			case 'uptime': {
+				const urls = (settings.urls ?? '')
+					.split('\n')
+					.map((u) => u.trim())
+					.filter(Boolean);
+				if (!urls.length) return { status: 'not_configured', detail: 'No address to watch.' };
+				const results = await Promise.all(
+					urls.map(async (u) => {
+						const started = Date.now();
+						try {
+							const res = await get(u);
+							return {
+								u,
+								ok: res.status < 400,
+								text: `${res.status} in ${Date.now() - started} ms`
+							};
+						} catch (e) {
+							return { u, ok: false, text: e instanceof Error ? e.message : 'no answer' };
+						}
+					})
+				);
+				const down = results.filter((r) => !r.ok);
+				const detail = results.map((r) => `${new URL(r.u).host}: ${r.text}`).join(' · ');
+				return { status: down.length ? 'error' : 'ok', detail };
+			}
+			case 'checkly': {
+				if (!secrets.checklyApiKey || !settings.accountId) {
+					return {
+						status: 'not_configured',
+						detail: 'CHECKLY_API_KEY and the account id are needed.'
+					};
+				}
+				const res = await get('https://api.checklyhq.com/v1/check-statuses', {
+					Authorization: `Bearer ${secrets.checklyApiKey}`,
+					'X-Checkly-Account': settings.accountId
+				});
+				if (!res.ok) return { status: 'error', detail: `Checkly answered ${res.status}.` };
+				const checks = (await res.json()) as {
+					name: string;
+					hasFailures: boolean;
+					hasErrors: boolean;
+				}[];
+				const failing = checks.filter((c) => c.hasFailures || c.hasErrors).map((c) => c.name);
+				if (!checks.length)
+					return { status: 'not_configured', detail: 'No checks in Checkly yet.' };
+				return failing.length
+					? { status: 'error', detail: `Failing: ${failing.join(', ')}` }
+					: { status: 'ok', detail: `${checks.length} checks passing.` };
+			}
+			case 'n8n': {
+				const list = pairs(settings.workflows);
+				if (!secrets.n8nApiKey || !settings.baseUrl || !list.length) {
+					return {
+						status: 'not_configured',
+						detail: 'N8N_API_KEY, the address and the workflows are needed.'
+					};
+				}
+				const base = settings.baseUrl.replace(/\/+$/, '');
+				const since = Date.now() - 24 * 3600_000;
+				const lines: string[] = [];
+				let failed = false;
+				for (const w of list) {
+					// Read only: the executions list. Never /run, /activate or a webhook.
+					const res = await get(
+						`${base}/api/v1/executions?workflowId=${encodeURIComponent(w.id)}&limit=20`,
+						{ 'X-N8N-API-KEY': secrets.n8nApiKey, Accept: 'application/json' }
+					);
+					if (!res.ok) {
+						failed = true;
+						lines.push(`${w.name}: n8n answered ${res.status}`);
+						continue;
+					}
+					const runs =
+						((await res.json()) as { data?: { status?: string; startedAt?: string }[] }).data ?? [];
+					const recent = runs.filter((r) => Date.parse(r.startedAt ?? '') >= since);
+					const errors = recent.filter(
+						(r) => r.status === 'error' || r.status === 'crashed'
+					).length;
+					if (errors) failed = true;
+					// Some workflows don't save successful runs (FFL Google Sheets), so only failures count.
+					lines.push(`${w.name}: ${errors} failed in 24 h`);
+				}
+				return { status: failed ? 'error' : 'ok', detail: lines.join(' · ') };
 			}
 			case 'claude-connector': {
 				if (!CONNECTOR_URL) {

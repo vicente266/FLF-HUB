@@ -66,6 +66,16 @@ export const AUTOMATIONS: AutomationDef[] = [
 		defaultEnabled: false
 	},
 	{
+		id: 'portal-sync',
+		name: 'Import the portal sheet',
+		description:
+			'Every night, reads the FLF Portal sheet (CRM, Applications, Profiles, Tasks, Perma, Wealth) into the Hub. Read only on the sheet: the portal and n8n are untouched.',
+		trigger: 'schedule',
+		schedule: 'Every day at 03:00 (Madrid)',
+		uses: ['portal-sheet'],
+		defaultEnabled: false
+	},
+	{
 		id: 'sheets-sync',
 		name: 'Sync Google Sheets',
 		description: 'Every night, copies the configured sheets for Reports.',

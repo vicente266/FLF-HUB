@@ -189,6 +189,14 @@ export async function dailyDigest(slackUrl: string | undefined) {
 	});
 }
 
+export async function portalSync() {
+	await run('portal-sync', async () => {
+		const portal = await import('../portal/index.js');
+		const r = await portal.run();
+		return `${r.contacts} contacts (${r.created} new, ${r.moved} moved), ${r.tasks} tasks`;
+	});
+}
+
 export async function sheetsSync() {
 	await run('sheets-sync', async () => {
 		const n = await connections.syncSheets();

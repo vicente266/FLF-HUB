@@ -64,6 +64,30 @@ export const CONNECTORS: Connector[] = [
 		testable: true
 	},
 	{
+		id: 'portal-sheet',
+		name: 'FLF Portal sheet',
+		category: 'platform',
+		availability: 'live',
+		description:
+			'The portal’s backend Google Sheet (Profiles, Applications, CRM, Tasks, Perma, Wealth). The Hub only READS it, nightly and on demand: the portal and n8n keep writing to it. The check flags missing columns (schema drift).',
+		feeds: ['CRM', 'Tasks', 'Reports', 'Wellbeing'],
+		secrets: [],
+		settings: [
+			{
+				key: 'spreadsheetId',
+				label: 'Spreadsheet id',
+				help: 'Leave empty for the FLF Portal Backend sheet.',
+				kind: 'text'
+			}
+		],
+		setup: [
+			'Share the sheet with the Cloud Functions service account as **Viewer** (never Editor: the Hub must not be able to write to production).',
+			'Press Test: every tab and column the import needs must be found.',
+			'Press Dry run to see what would be imported, then Sync now. It runs again every night.'
+		],
+		testable: true
+	},
+	{
 		id: 'google-sheets',
 		name: 'Google Sheets',
 		category: 'data',
@@ -135,6 +159,79 @@ export const CONNECTORS: Connector[] = [
 		testable: true
 	},
 	{
+		id: 'uptime',
+		name: 'Uptime (built in)',
+		category: 'platform',
+		availability: 'live',
+		description:
+			'Every hour the Hub opens each address (GET only) and records the status and response time: the website, the portal, the Hub. Never calls the n8n webhook, which would run production actions.',
+		feeds: ['Health'],
+		secrets: [],
+		settings: [
+			{
+				key: 'urls',
+				label: 'Addresses',
+				help: 'One per line. GET only; no webhooks that change data.',
+				kind: 'list'
+			}
+		],
+		setup: ['List the public addresses to watch, then press Test.'],
+		testable: true
+	},
+	{
+		id: 'checkly',
+		name: 'Checkly',
+		category: 'platform',
+		availability: 'live',
+		description:
+			'External monitoring (free Hobby plan): Checkly checks the website, the portal and the Hub every few minutes from outside, even a portal sign-in. The Hub shows its pass/fail in Health.',
+		feeds: ['Health'],
+		secrets: ['CHECKLY_API_KEY'],
+		settings: [
+			{
+				key: 'accountId',
+				label: 'Account id',
+				help: 'Checkly → Account settings → General.',
+				kind: 'text'
+			}
+		],
+		setup: [
+			'Create a free Checkly account and add API or browser checks for the website, the portal login page and the Hub.',
+			'Checkly → User settings → API keys: create a read key. Developer only: `firebase functions:secrets:set CHECKLY_API_KEY`, deploy.',
+			'Put the account id here and press Test.'
+		],
+		testable: true
+	},
+	{
+		id: 'n8n',
+		name: 'n8n workflows',
+		category: 'platform',
+		availability: 'live',
+		description:
+			'Reads the executions of FLF’s n8n workflows (FFL Google Sheets, Calendar → Events, the alerts) and reports failures in Health. Read only: it never runs, edits or publishes a workflow.',
+		feeds: ['Health'],
+		secrets: ['N8N_API_KEY'],
+		settings: [
+			{
+				key: 'baseUrl',
+				label: 'n8n address',
+				help: 'e.g. https://vv1.app.n8n.cloud',
+				kind: 'text'
+			},
+			{
+				key: 'workflows',
+				label: 'Workflows',
+				help: 'One per line: `Name | workflow id`, e.g. `FFL Google Sheets | H8nD4J21jpY18yLj`.',
+				kind: 'list'
+			}
+		],
+		setup: [
+			'n8n → Settings → n8n API: create an API key (n8n has no read-only key: keep it in Secret Manager only). Developer only: `firebase functions:secrets:set N8N_API_KEY`, deploy.',
+			'Fill in the address and the workflows, then press Test.'
+		],
+		testable: true
+	},
+	{
 		id: 'fellow-portal',
 		name: 'Fellow Portal',
 		category: 'platform',
@@ -147,8 +244,8 @@ export const CONNECTORS: Connector[] = [
 			{ key: 'baseUrl', label: 'Portal API URL', help: 'Base URL of the portal API.', kind: 'text' }
 		],
 		setup: [
-			'Needs access to the FLF repository (the portal code) to see its data model and auth.',
-			'Agree the API: create Fellow account, list Fellows, activity feed.'
+			'Reading the portal’s data is live through the FLF Portal sheet connection.',
+			'Writing back (giving an accepted Fellow portal access) waits until the portal moves off the sheet: n8n is production.'
 		],
 		testable: false
 	},

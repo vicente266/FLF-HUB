@@ -291,6 +291,20 @@ export function registerTools(server: McpServer, caller: Caller): void {
 					phone: c.phone || null,
 					linkedin: c.linkedin || null,
 					notes: c.notes || null,
+					// The portal sheet's view of this person. Wellbeing (PERMA) and finances are never
+					// served here: they need their own permissions in the Hub.
+					portal: c.portal
+						? {
+								cohort: c.portal.cohort,
+								pledgeSigned: c.portal.pledgeSigned,
+								sherpa: c.portal.sherpaName,
+								nextStep: c.portal.nextStep,
+								scoring: c.portal.scoring,
+								reasonLost: c.portal.reasonLost,
+								sheetNotes: c.portal.sheetNotes,
+								syncedAt: iso(c.portal.syncedAt)
+							}
+						: null,
 					stageChangedAt: iso(c.stageChangedAt),
 					pipeline: PIPELINES[c.type].stages.map((s) => s.id),
 					timeline: activity.docs.map((d) => ({
@@ -827,6 +841,24 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			'flf_sync_sheets',
 			() => 'sheets',
 			async () => data(await act('connections', 'sheets.sync', {}))
+		)
+	);
+
+	server.registerTool(
+		'flf_import_portal',
+		{
+			title: 'Import the portal sheet',
+			description:
+				'Read the FLF Portal sheet (CRM, Applications, Profiles, Tasks) into the Hub. dry_run=true ' +
+				'(default) only reports what would change. Read only on the sheet: the live portal and n8n ' +
+				'are never touched.',
+			inputSchema: z.object({ dry_run: z.boolean().default(true) }),
+			annotations: write
+		},
+		run(
+			'flf_import_portal',
+			(a) => (a.dry_run ? 'plan' : 'run'),
+			async ({ dry_run }) => data(await act('portal', dry_run ? 'sync.plan' : 'sync.run', {}))
 		)
 	);
 

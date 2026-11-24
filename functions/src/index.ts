@@ -20,6 +20,7 @@ import * as connections from './lib/connections/index';
 import * as reports from './lib/reports/index';
 import * as health from './lib/health/index';
 import * as claude from './lib/mcp/index';
+import * as portal from './lib/portal/index';
 
 setGlobalOptions({ maxInstances: 10, region: REGION });
 
@@ -27,6 +28,10 @@ setGlobalOptions({ maxInstances: 10, region: REGION });
 const leadWebhookToken = defineSecret('LEAD_WEBHOOK_TOKEN');
 /** Slack Incoming Webhook URL of the team channel. */
 const slackWebhookUrl = defineSecret('SLACK_WEBHOOK_URL');
+/** Checkly read API key (Health). */
+const checklyApiKey = defineSecret('CHECKLY_API_KEY');
+/** n8n API key, used only to list executions (Health). */
+const n8nApiKey = defineSecret('N8N_API_KEY');
 /** Signs the Claude connector's clients and tokens and seals its keys (docs/claude-connector.md). */
 const flfMcpKey = defineSecret('FLF_MCP_KEY');
 
@@ -36,8 +41,12 @@ const webhookLogger = utils.createLogger('crm').scope('webhook');
 /** Secrets for connection checks, read only inside handlers that declared them. */
 const secrets = (): connections.Secrets => ({
 	slackWebhookUrl: slackWebhookUrl.value() || undefined,
-	leadWebhookToken: leadWebhookToken.value() || undefined
+	leadWebhookToken: leadWebhookToken.value() || undefined,
+	checklyApiKey: checklyApiKey.value() || undefined,
+	n8nApiKey: n8nApiKey.value() || undefined
 });
+/** Every secret a connection check reads. */
+const checkSecrets = [slackWebhookUrl, leadWebhookToken, checklyApiKey, n8nApiKey];
 
 /*
  * EVERY callable is one `<feature>Action` dispatcher (see dispatch.ts). Add an action to the
@@ -180,7 +189,7 @@ export const automationsAction = onCall(
 
 const connectionActions = connections.actionsWith(secrets);
 export const connectionsAction = onCall(
-	{ secrets: [slackWebhookUrl, leadWebhookToken], timeoutSeconds: 300 },
+	{ secrets: checkSecrets, timeoutSeconds: 300 },
 	dispatch('connections', {
 		/** Every connection, what it feeds and how to set it up. */
 		'config.get': { permission: 'connections.any.read', handler: connectionActions['config.get'] },
@@ -198,6 +207,34 @@ export const connectionsAction = onCall(
 		},
 		/** Connections, automations and data freshness in one list. */
 		'health.get': { permission: 'health.any.read', handler: async () => health.get() }
+	})
+);
+
+export const portalAction = onCall(
+	{ timeoutSeconds: 300, memory: '512MiB' },
+	dispatch('portal', {
+		/** What an import of the portal sheet would write, without writing anything. */
+		'sync.plan': { permission: 'connections.any.write', handler: async () => portal.dryRun() },
+		/** Import the portal sheet now (read-only on the sheet; upserts in the Hub). */
+		'sync.run': { permission: 'connections.any.write', handler: async () => portal.run() },
+		/** One Fellow's PERMA history. Health data: its own permission, never via Claude. */
+		'wellbeing.get': {
+			permission: 'wellbeing.any.read',
+			denied: 'Wellbeing data needs its own permission.',
+			handler: async (p) => portal.wellbeingOf(utils.str(p.contactId, 'contactId'))
+		},
+		/** Cohort averages of the latest PERMA: no individual answers. */
+		'wellbeing.summary': {
+			permission: 'wellbeing.any.read',
+			denied: 'Wellbeing data needs its own permission.',
+			handler: async () => portal.wellbeingSummary()
+		},
+		/** One Fellow's income and financial report totals. */
+		'finance.get': {
+			permission: 'wealth.any.read',
+			denied: 'Financial data needs its own permission.',
+			handler: async (p) => portal.financeOf(utils.str(p.contactId, 'contactId'))
+		}
 	})
 );
 
@@ -219,6 +256,10 @@ export const crmContactWritten = onDocumentWritten(
 		if (!after?.exists) return;
 		const c = after.data() as crm.Contact;
 		const before = event.data?.before?.exists ? (event.data.before.data() as crm.Contact) : null;
+		// The portal import writes `portal.syncedAt`: those writes are copies of the sheet, so no
+		// owner assignment, Slack alert or follow-up task fires from them.
+		const synced = (x: crm.Contact | null) => (x as any)?.portal?.syncedAt?.toMillis?.();
+		if (synced(c) && synced(c) !== synced(before)) return;
 		if (!before) {
 			await automations.onContactCreated(event.params.id, c, slackWebhookUrl.value() || undefined);
 		} else if (before.stage !== c.stage) {
@@ -295,7 +336,7 @@ export const claudeMcp = onRequest(
 	{
 		// The tools run other dispatchers' actions (connections:test reads Slack and the lead token),
 		// so the connector holds those secrets too.
-		secrets: [flfMcpKey, slackWebhookUrl, leadWebhookToken],
+		secrets: [flfMcpKey, ...checkSecrets],
 		timeoutSeconds: 60,
 		memory: '512MiB',
 		cpu: 1,
@@ -311,10 +352,13 @@ export const claudeMcp = onRequest(
 	}
 );
 
-/** Every night: copy Google Sheets for Reports. */
+/** Every night: copy Google Sheets for Reports, then import the portal sheet (read-only). */
 export const sheetsNightly = onSchedule(
-	{ schedule: '0 3 * * *', timeZone: 'Europe/Madrid', timeoutSeconds: 300 },
-	async () => automations.sheetsSync()
+	{ schedule: '0 3 * * *', timeZone: 'Europe/Madrid', timeoutSeconds: 540, memory: '512MiB' },
+	async () => {
+		await automations.sheetsSync();
+		await automations.portalSync();
+	}
 );
 
 /** Every hour: check every connection so Health is current. */

@@ -14,6 +14,10 @@ export const PERMISSIONS = [
 	'connections.any.read',
 	'connections.any.write',
 	'health.any.read',
+	// Health data (PERMA wellbeing). Never served to Claude.
+	'wellbeing.any.read',
+	// Fellows' income and financial reports.
+	'wealth.any.read',
 	// Connect Claude to the Hub (the MCP connector). No admin bypass: admins need it too.
 	'claude.self.connect'
 ] as const;
