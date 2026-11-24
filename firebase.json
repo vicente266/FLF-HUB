@@ -1,11 +1,4 @@
 {
-	"apphosting": [
-		{
-			"backendId": "flf-hub-backend",
-			"rootDir": "/",
-			"ignore": ["node_modules", ".git", "firebase-debug.log", "functions", "scripts"]
-		}
-	],
 	"firestore": [
 		{
 			"database": "(default)",
@@ -23,11 +16,18 @@
 		}
 	],
 	"emulators": {
-		"apphosting": { "port": 5002, "rootDirectory": "./", "startCommand": "npm run emulate" },
-		"auth": { "port": 9099 },
-		"functions": { "port": 5001 },
-		"firestore": { "port": 8081 },
-		"ui": { "enabled": true },
+		"auth": {
+			"port": 9099
+		},
+		"functions": {
+			"port": 5001
+		},
+		"firestore": {
+			"port": 8081
+		},
+		"ui": {
+			"enabled": true
+		},
 		"singleProjectMode": true
 	}
 }

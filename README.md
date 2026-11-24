@@ -57,15 +57,29 @@ npm run check    # svelte-check
 cd functions && npm run build
 ```
 
-## First deploy
+## Deploy
 
-1. Create the Firebase project `flf-hub` (Blaze plan), Firestore in `eur3`, Auth with
-   Email/Password and Google enabled.
-2. Create an App Hosting backend `flf-hub-backend`; store the web config as the
-   `VITE_FIREBASE_*` secrets listed in `apphosting.yaml`.
-3. `firebase functions:secrets:set LEAD_WEBHOOK_TOKEN`, `SLACK_WEBHOOK_URL` (empty is fine until
-   Slack is set up) and `FLF_MCP_KEY` (see `docs/claude-connector.md`).
-4. `firebase deploy`.
-5. Sign in once, then in the Firestore console set your `user/{uid}.role` to `admin`, sign out
-   and in. Create the groups (Default, Sherpas, Operations) in Admin → Groups.
-6. Open Connections and follow each card's setup steps.
+The web app is a static site on **Hostinger** (`hub.foundersforlifefellowship.com`); the backend
+(Auth, Firestore, Cloud Functions) is **Firebase**.
+
+### Firebase (once)
+
+1. Create the project (Blaze plan: Cloud Functions need it), Firestore in `eur3`.
+2. Authentication → Sign-in method: enable **Google only**. Settings → Authorized domains: add
+   `hub.foundersforlifefellowship.com`, remove anything not used.
+3. Google Cloud → APIs & Services → Credentials: restrict the browser API key to HTTP referrer
+   `https://hub.foundersforlifefellowship.com/*`.
+4. Secrets: `firebase functions:secrets:set` for `LEAD_WEBHOOK_TOKEN`, `SLACK_WEBHOOK_URL`,
+   `FLF_MCP_KEY`, `CHECKLY_API_KEY`, `N8N_API_KEY` (empty is fine for the ones not set up yet).
+5. `firebase deploy --only functions,firestore` (functions, rules and indexes).
+6. Sign in once, set your `user/{uid}.role` to `admin` in the Firestore console, sign in again.
+
+### Web app (every release)
+
+```sh
+cp .env.example .env.production    # fill in the web config from Firebase → Project settings
+npm run build                      # writes build/, .htaccess included
+```
+
+Upload the **contents** of `build/` (including the hidden `.htaccess`) to the subdomain's folder
+in Hostinger (File Manager or FTP), replacing what is there.

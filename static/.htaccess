@@ -1,0 +1,30 @@
+# FLF Hub on Hostinger (Apache/LiteSpeed): HTTPS, security headers, single-page routing.
+
+RewriteEngine On
+
+# HTTPS only.
+RewriteCond %{HTTPS} !=on
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# Every path that isn't a real file is the app (SvelteKit's index.html fallback).
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.html [L]
+
+<IfModule mod_headers.c>
+	# No page of the Hub may be framed: the Claude consent page's Approve button must not be
+	# clickjacked.
+	Header always set Content-Security-Policy "frame-ancestors 'none'"
+	Header always set X-Frame-Options "DENY"
+	Header always set X-Content-Type-Options "nosniff"
+	Header always set Referrer-Policy "strict-origin-when-cross-origin"
+	Header always set Strict-Transport-Security "max-age=31536000"
+
+	# Hashed build files never change; index.html must always be fresh.
+	<FilesMatch "\.(js|css|woff2?|svg|png)$">
+		Header set Cache-Control "public, max-age=31536000, immutable"
+	</FilesMatch>
+	<FilesMatch "index\.html$">
+		Header set Cache-Control "no-cache"
+	</FilesMatch>
+</IfModule>

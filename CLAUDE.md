@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-FLF Hub: SvelteKit 2 (Svelte 5 runes) + Firebase (Firestore, Auth, Functions v2, App Hosting).
+FLF Hub: SvelteKit 2 (Svelte 5 runes) + Firebase (Firestore, Auth, Functions v2); the web app is a static site on Hostinger.
 Same shape and rules as the EBS Hub (`barschool/aihub`); when in doubt, do what it does.
 
 ## Shape of a feature

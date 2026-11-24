@@ -10,6 +10,7 @@
 	} from 'firebase/auth';
 	import ArrowRight from '@lucide/svelte/icons/arrow-right';
 	import { auth } from '$lib/firebase';
+	import { useEmulator } from '$lib/env';
 	import Logo from '$lib/components/Logo.svelte';
 	import FormError from '$lib/components/shared/FormError.svelte';
 
@@ -96,45 +97,52 @@
 			<p class="mt-1 text-sm text-ink-soft">Sign in to continue.</p>
 		</div>
 
-		<form class="mt-8 space-y-3" onsubmit={withEmail}>
+		<div class="mt-8 space-y-3">
 			<FormError message={error} />
-			{#if info}<p class="text-sm text-primary-700">{info}</p>{/if}
-			<div>
-				<label class="label" for="email">Email address</label>
-				<input
-					id="email"
-					class="input"
-					type="email"
-					autocomplete="email"
-					bind:value={email}
-					required
-				/>
-			</div>
-			<div>
-				<label class="label" for="password">Password</label>
-				<input
-					id="password"
-					class="input"
-					type="password"
-					autocomplete="current-password"
-					bind:value={password}
-					required
-				/>
-			</div>
-			<button class="btn-primary w-full py-2" disabled={busy}>
-				Sign in <ArrowRight class="h-4 w-4" />
+			<button class="btn-primary w-full py-2.5" onclick={withGoogle}>
+				Continue with Google <ArrowRight class="h-4 w-4" />
 			</button>
-		</form>
-
-		<div class="my-5 flex items-center gap-3 text-xs text-ink-soft/70">
-			<div class="h-px flex-1 bg-line/60"></div>
-			or
-			<div class="h-px flex-1 bg-line/60"></div>
+			<p class="text-center text-xs text-ink-soft">
+				Use your FLF Google account. New accounts wait for an admin to approve them.
+			</p>
 		</div>
-		<button class="btn-ghost w-full py-2" onclick={withGoogle}>Continue with Google</button>
 
-		<div class="mt-6 text-center text-xs text-ink-soft">
-			<button class="hover:text-primary-700" onclick={reset}>Forgot password?</button>
-		</div>
+		{#if useEmulator}
+			<!-- Local emulator only: seeded test users sign in with a password. -->
+			<form class="mt-6 space-y-3 border-t border-line/60 pt-5" onsubmit={withEmail}>
+				<p class="text-xs font-semibold text-warning">Emulator only</p>
+				{#if info}<p class="text-sm text-primary-700">{info}</p>{/if}
+				<div>
+					<label class="label" for="email">Email address</label>
+					<input
+						id="email"
+						class="input"
+						type="email"
+						autocomplete="email"
+						bind:value={email}
+						required
+					/>
+				</div>
+				<div>
+					<label class="label" for="password">Password</label>
+					<input
+						id="password"
+						class="input"
+						type="password"
+						autocomplete="current-password"
+						bind:value={password}
+						required
+					/>
+				</div>
+				<button class="btn-ghost w-full py-2" disabled={busy}>Sign in with password</button>
+				<button
+					type="button"
+					class="w-full text-xs text-ink-soft hover:text-primary-700"
+					onclick={reset}
+				>
+					Forgot password?
+				</button>
+			</form>
+		{/if}
 	</div>
 </div>
