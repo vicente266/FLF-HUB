@@ -51,6 +51,11 @@ export const coreAction = onCall(
 		'user.validate': {
 			handler: async (_p, auth) => {
 				const u = await user.getOrCreate(auth);
+				// The Firestore rules read the role claim. syncUserRole writes it later, after the
+				// client has already refreshed its token, so write it here when it is missing or stale.
+				if (auth.token.role !== u.role) {
+					await admin.auth().setCustomUserClaims(auth.uid, { role: u.role });
+				}
 				const valid = u.role !== 'guest';
 				return {
 					valid,
@@ -288,7 +293,9 @@ export const automationsDaily = onSchedule(
  */
 export const claudeMcp = onRequest(
 	{
-		secrets: [flfMcpKey],
+		// The tools run other dispatchers' actions (connections:test reads Slack and the lead token),
+		// so the connector holds those secrets too.
+		secrets: [flfMcpKey, slackWebhookUrl, leadWebhookToken],
 		timeoutSeconds: 60,
 		memory: '512MiB',
 		cpu: 1,

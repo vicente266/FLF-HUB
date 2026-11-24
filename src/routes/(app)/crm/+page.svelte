@@ -21,7 +21,11 @@
 	const cfg = crmConfig();
 	const canWrite = hasPermission('crm.any.write');
 
-	let type = $state<ContactType>('fellow');
+	let type = $state<ContactType>('');
+	// The first contact type the backend defines, once its config arrives.
+	$effect(() => {
+		if (!type && cfg.value) type = cfg.value.types[0];
+	});
 	let view = $state<'board' | 'list'>('board');
 	let search = $state('');
 	let mine = $state(false);
@@ -31,6 +35,7 @@
 	// One bounded listener for the selected type.
 	$effect(() => {
 		const t = type;
+		if (!t) return;
 		return listen<Contact>(
 			query(
 				collection(db, 'contact'),
@@ -54,7 +59,7 @@
 		})
 	);
 
-	let stages = $derived(cfg.value?.pipelines[type].stages ?? []);
+	let stages = $derived(cfg.value?.pipelines[type]?.stages ?? []);
 
 	// Drag a card to another column to move it.
 	let dragging = $state<string | null>(null);
@@ -64,10 +69,14 @@
 		dragging = null;
 		const c = contacts.find((x) => x.id === id);
 		if (!id || !c || c.stage === stage || !canWrite) return;
+		const previous = c.stage;
 		c.stage = stage; // optimistic; the listener confirms
+		moveError = null;
 		try {
 			await callAction('crm:contact.stage', { id, stage });
 		} catch (e) {
+			// Nothing changed in Firestore, so the listener won't put it back.
+			c.stage = previous;
 			moveError = errorText(e);
 		}
 	}

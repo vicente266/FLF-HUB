@@ -20,8 +20,15 @@ export function stageLabel(c: CrmConfig | null, type: ContactType, stage: string
 	return c?.pipelines[type]?.stages.find((s) => s.id === stage)?.label ?? stage;
 }
 
-export const TYPE_STYLE: Record<ContactType, string> = {
-	fellow: 'bg-primary-50 text-primary-700',
-	guru: 'bg-amber-50 text-amber-800',
-	investor: 'bg-sky-50 text-sky-800'
-};
+/** Badge colours, given out in the order of `config.types`. */
+const TYPE_STYLES = [
+	'bg-primary-50 text-primary-700',
+	'bg-amber-50 text-amber-800',
+	'bg-sky-50 text-sky-800',
+	'bg-canvas text-ink-soft'
+];
+
+export function typeStyle(c: CrmConfig | null, type: ContactType): string {
+	const i = c?.types.indexOf(type) ?? -1;
+	return TYPE_STYLES[i >= 0 && i < TYPE_STYLES.length ? i : TYPE_STYLES.length - 1];
+}

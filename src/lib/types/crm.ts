@@ -1,6 +1,7 @@
 /** Shapes returned by `crm:config.get` and stored in `contact`, `task`. */
 
-export type ContactType = 'fellow' | 'guru' | 'investor';
+/** A contact type id from `crm:config.get` (defined in functions/src/lib/crm/config.ts). */
+export type ContactType = string;
 
 export interface Stage {
 	id: string;

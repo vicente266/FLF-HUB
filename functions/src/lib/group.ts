@@ -26,6 +26,13 @@ export async function save(
 	);
 
 	const all = await collection.get();
+	// New users are put in the Default group by name, so it can't be renamed.
+	const current = id ? all.docs.find((d) => d.id === id) : undefined;
+	if (current?.data().name === DEFAULT_NAME && trimmed !== DEFAULT_NAME) {
+		throw new Error(
+			`The ${DEFAULT_NAME} group can't be renamed: new users are added to it by name.`
+		);
+	}
 	const duplicate = all.docs.find(
 		(d) => String(d.data().name).toLowerCase() === trimmed.toLowerCase() && d.id !== id
 	);

@@ -51,6 +51,41 @@ export function config() {
 	return { types: CONTACT_TYPES, sources: SOURCES, pipelines: PIPELINES, staleDays: STALE_DAYS };
 }
 
+/** The team's time zone: a due date is the end of that day here. */
+const TIME_ZONE = 'Europe/Madrid';
+
+/**
+ * `YYYY-MM-DD` as 23:59:59.999 of that day in Madrid, so a task due today is not overdue until the
+ * day is over. (Midnight UTC would make it overdue from the moment it is created.)
+ */
+export function endOfDay(date: string): Date {
+	const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+	if (!m) throw new HttpsError('invalid-argument', 'Invalid due date: use YYYY-MM-DD.');
+	const utc = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 59, 999);
+	// Madrid's offset at that moment (summer or winter time).
+	const parts = new Intl.DateTimeFormat('en-US', {
+		timeZone: TIME_ZONE,
+		hourCycle: 'h23',
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit'
+	}).formatToParts(new Date(utc));
+	const v = (t: string) => Number(parts.find((x) => x.type === t)?.value);
+	const asLocal = Date.UTC(
+		v('year'),
+		v('month') - 1,
+		v('day'),
+		v('hour'),
+		v('minute'),
+		v('second'),
+		999
+	);
+	return new Date(utc - (asLocal - utc));
+}
+
 /** Append one entry to a contact's timeline and touch its last activity. */
 export async function logActivity(
 	contactId: string,
@@ -207,8 +242,7 @@ export const actions = {
 		const contactId = str(p.contactId, 'contactId');
 		const c = await contacts.doc(contactId).get();
 		if (!c.exists) throw new HttpsError('not-found', 'Contact not found.');
-		const due = new Date(str(p.dueAt, 'dueAt'));
-		if (isNaN(due.getTime())) throw new HttpsError('invalid-argument', 'Invalid due date.');
+		const due = endOfDay(str(p.dueAt, 'dueAt'));
 		await tasks.add({
 			contactId,
 			contactName: c.data()?.name,

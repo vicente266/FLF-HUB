@@ -17,7 +17,7 @@
 		formatDateTime,
 		toDate
 	} from '$lib/utils';
-	import { crmConfig, TYPE_STYLE } from '$lib/helpers/crmConfig.svelte';
+	import { crmConfig, typeStyle } from '$lib/helpers/crmConfig.svelte';
 	import type { Activity, Contact, ContactDraft, Task, TeamUser } from '$lib/types/crm';
 	import Modal from '$lib/components/shared/Modal.svelte';
 	import FormError from '$lib/components/shared/FormError.svelte';
@@ -135,9 +135,10 @@
 						<div class="min-w-0">
 							<div class="flex items-center gap-2">
 								<span
-									class="rounded-full px-2 py-0.5 text-[11px] font-bold uppercase {TYPE_STYLE[
+									class="rounded-full px-2 py-0.5 text-[11px] font-bold uppercase {typeStyle(
+										config,
 										c.type
-									]}"
+									)}"
 								>
 									{config.pipelines[c.type].label}
 								</span>

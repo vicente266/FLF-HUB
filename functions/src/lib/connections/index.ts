@@ -108,7 +108,9 @@ async function check(
 						detail: 'FLF_CONNECTOR_URL is not set (deploy, then set it).'
 					};
 				}
-				const n = (await db.collection(CONNECTION_COLLECTION).count().get()).data().count;
+				const n = (
+					await db.collection(CONNECTION_COLLECTION).where('endsAt', '>', new Date()).count().get()
+				).data().count;
 				return {
 					status: 'ok',
 					detail: `${n} active connection${n === 1 ? '' : 's'} · ${CONNECTOR_URL}`

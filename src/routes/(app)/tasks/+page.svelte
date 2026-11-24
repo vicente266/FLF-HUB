@@ -32,12 +32,18 @@
 
 	const due = (t: Task) => toDate(t.dueAt)?.getTime() ?? 0;
 	// Midnight tonight, local time.
-	const endOfToday = new Date(new Date().toDateString()).getTime() + 86_400_000 - 1;
+	// Re-read every minute, so a page left open past midnight moves tasks to the right group.
+	let now = $state(Date.now());
+	$effect(() => {
+		const timer = setInterval(() => (now = Date.now()), 60_000);
+		return () => clearInterval(timer);
+	});
+	let endOfToday = $derived(new Date(new Date(now).toDateString()).getTime() + 86_400_000 - 1);
 	let groups = $derived([
-		{ label: 'Overdue', rows: tasks.filter((t) => due(t) < Date.now()), tone: 'text-danger' },
+		{ label: 'Overdue', rows: tasks.filter((t) => due(t) < now), tone: 'text-danger' },
 		{
 			label: 'Today',
-			rows: tasks.filter((t) => due(t) >= Date.now() && due(t) <= endOfToday),
+			rows: tasks.filter((t) => due(t) >= now && due(t) <= endOfToday),
 			tone: 'text-primary-700'
 		},
 		{ label: 'Later', rows: tasks.filter((t) => due(t) > endOfToday), tone: 'text-ink-soft' }
