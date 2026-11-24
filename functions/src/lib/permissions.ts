@@ -1,0 +1,19 @@
+/**
+ * Every permission a group can grant, `<feature>.<scope>.<action>`. The Admin > Groups screen
+ * reads this list through `core:config.get`, so it is defined only here.
+ */
+export const PERMISSIONS = [
+	'crm.any.read',
+	'crm.any.write',
+	'crm.any.delete',
+	'tasks.self.read',
+	'tasks.any.read',
+	'reports.any.read',
+	'automations.any.read',
+	'automations.any.write',
+	'connections.any.read',
+	'connections.any.write',
+	'health.any.read'
+] as const;
+
+export type Permission = (typeof PERMISSIONS)[number];

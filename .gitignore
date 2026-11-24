@@ -1,0 +1,16 @@
+node_modules
+.firebase/
+/firestore-export
+*-debug.log
+/.svelte-kit
+/build
+.DS_Store
+.env
+.env.*
+!.env.example
+*.log
+*.tsbuildinfo
+vite.config.ts.timestamp-*
+functions/lib
+functions/.secret.local
+.claude/settings.local.json

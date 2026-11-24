@@ -1,0 +1,43 @@
+rules_version = '2';
+
+// All writes go through callables (admin SDK); clients only read. Rules see the `role` claim
+// only — permission strings are checked by the callables.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function team() {
+      return request.auth != null && request.auth.token.role in ['user', 'admin'];
+    }
+
+    match /user/{uid} {
+      allow read: if team() || (request.auth != null && request.auth.uid == uid);
+    }
+    match /group/{id} {
+      allow read: if team();
+    }
+    match /contact/{id} {
+      allow read: if team();
+      match /activity/{activityId} {
+        allow read: if team();
+      }
+    }
+    match /task/{id} {
+      allow read: if team();
+    }
+    match /automation/{id} {
+      allow read: if team();
+    }
+    match /automationRun/{id} {
+      allow read: if team();
+    }
+    // Settings only; secrets live in Secret Manager.
+    match /connection/{id} {
+      allow read: if team();
+    }
+    match /sheetSnapshot/{id} {
+      allow read: if team();
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

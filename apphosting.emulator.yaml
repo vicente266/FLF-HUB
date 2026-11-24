@@ -1,0 +1,19 @@
+env:
+  - variable: VITE_USE_EMULATOR
+    value: 'true'
+  - variable: VITE_EMULATOR_HOST
+    value: localhost
+  - variable: VITE_AUTH_EMULATOR_PORT
+    value: '9099'
+  - variable: VITE_FIRESTORE_EMULATOR_PORT
+    value: '8081'
+  - variable: VITE_FUNCTIONS_EMULATOR_PORT
+    value: '5001'
+  - variable: VITE_FIREBASE_PROJECT_ID
+    value: flf-hub
+  - variable: VITE_FIREBASE_API_KEY
+    value: emulator
+  - variable: VITE_FIREBASE_AUTH_DOMAIN
+    value: localhost
+  - variable: VITE_FIREBASE_APP_ID
+    value: emulator

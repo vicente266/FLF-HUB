@@ -1,0 +1,181 @@
+{
+	"indexes": [
+		{
+			"collectionGroup": "contact",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "ownerUid",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "open",
+					"order": "ASCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "contact",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "open",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "needsAttention",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "lastActivityAt",
+					"order": "ASCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "contact",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "type",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "stage",
+					"order": "ASCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "contact",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "source",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "createdAt",
+					"order": "ASCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "contact",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "open",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "needsAttention",
+					"order": "ASCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "contact",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "type",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "createdAt",
+					"order": "DESCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "contact",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "ownerUid",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "createdAt",
+					"order": "DESCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "contact",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "needsAttention",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "createdAt",
+					"order": "DESCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "task",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "done",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "dueAt",
+					"order": "ASCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "task",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "assigneeUid",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "done",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "dueAt",
+					"order": "ASCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "task",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "contactId",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "dueAt",
+					"order": "ASCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "automationRun",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "automationId",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "at",
+					"order": "DESCENDING"
+				}
+			]
+		}
+	],
+	"fieldOverrides": []
+}
