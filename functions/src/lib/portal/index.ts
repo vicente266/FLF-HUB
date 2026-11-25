@@ -36,10 +36,13 @@ export interface Tab {
 	truncated?: boolean;
 }
 
-/** A cell's text; a spreadsheet error (`#DIV/0!`, `#N/A`, `#REF!`…) reads as empty. */
+/**
+ * A cell's text; a spreadsheet error (`#DIV/0!`, `#N/A`, `#REF!`…) reads as empty, also when the
+ * sheet appends its explanation ("#DIV/0! (Function DIVIDE parameter 2 cannot be zero.)").
+ */
 const norm = (s: unknown) => {
 	const v = String(s ?? '').trim();
-	return /^#(DIV\/0!|N\/A|VALUE!|REF!|NAME\?|NUM!|NULL!|ERROR!)$/i.test(v) ? '' : v;
+	return /^#(DIV\/0!|N\/A|VALUE!|REF!|NAME\?|NUM!|NULL!|ERROR!)(\s|$)/i.test(v) ? '' : v;
 };
 const lower = (s: unknown) => norm(s).toLowerCase();
 const hash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 24);
@@ -660,7 +663,9 @@ export async function run() {
 			Object.assign(update, { ownerUid: d.ownerUid, ownerName: d.ownerName });
 		// Once per contact imported before the sheet's dates were used: its real creation date, and
 		// its last activity from the sheet unless the Hub has a later one (one read, once).
-		if (cur.createdBy === 'portal-sync' && !(cur as { sheetDates?: boolean }).sheetDates) {
+		const firstPass =
+			cur.createdBy === 'portal-sync' && !(cur as { sheetDates?: boolean }).sheetDates;
+		if (firstPass) {
 			const hub = await ref.collection('activity').orderBy('at', 'desc').limit(20).get();
 			const hubLast = hub.docs.find((a) => a.data().via !== 'portal')?.data().at as
 				FirebaseFirestore.Timestamp | undefined;
@@ -708,7 +713,10 @@ export async function run() {
 			});
 		}
 		await ref.update(update);
-		if (update.ownerUid) await crm.handOverTasks(c.id, update.ownerUid as string);
+		// A new owner takes the contact's automation tasks. On the first pass this also repairs tasks
+		// left with whoever moved the contact before an owner was set by hand (handover came later).
+		const owner = (update.ownerUid as string | undefined) ?? (firstPass ? cur.ownerUid : null);
+		if (owner) await crm.handOverTasks(c.id, owner);
 	}
 
 	const batch = () => db.batch();

@@ -111,7 +111,8 @@ function sheet({ annInEvent = true, renameProfilesColumn = false } = {}) {
 				Role: 'Fellow',
 				'Pledge Signed': '10/06/2026',
 				'Pledge Date': '10/06/2026',
-				Growth: '#DIV/0!',
+				// As the real sheet returns it: the error with its explanation appended.
+				Growth: '#DIV/0! (Function DIVIDE parameter 2 cannot be zero.)',
 				'Sherpa Name': 'Bo'
 			})
 		],
@@ -320,6 +321,47 @@ await db.doc('task/t1').set({
 	dueAt: Ts.now()
 });
 
+// -- a contact imported before the sheet's dates were used, given an owner by hand before tasks
+// followed the owner: its automation task still sits with whoever moved it ------------------------
+
+const annId = portal.contactIdOf('ann@aware.io', 'Ann Aware');
+await db.doc(`contact/${annId}`).set({
+	type: 'fellow',
+	name: 'Ann Aware',
+	email: 'ann@aware.io',
+	company: 'Awareco',
+	linkedin: '',
+	phone: '',
+	tags: [],
+	notes: '',
+	stage: 'aware',
+	open: true,
+	ownerUid: 'u2',
+	ownerName: 'Boris Kowalski',
+	source: 'portal',
+	createdBy: 'portal-sync',
+	needsAttention: false,
+	portal: { sheetStage: 'aware', syncedAt: Ts.now() },
+	lastActivityAt: Ts.now(),
+	createdAt: Ts.now()
+});
+await db.doc('task/t2').set({
+	contactId: annId,
+	title: 'Send the teaser',
+	done: false,
+	automationId: 'stage-follow-up',
+	assigneeUid: 'u1',
+	dueAt: Ts.now()
+});
+await db.doc('task/t3').set({
+	contactId: annId,
+	title: 'Call Ann about the retreat',
+	done: false,
+	source: 'manual',
+	assigneeUid: 'u1',
+	dueAt: Ts.now()
+});
+
 console.log('First sync');
 const first = await sync('first');
 check(legacy !== fresh, 'a multi-email cell changes the contact id');
@@ -358,7 +400,18 @@ check(
 const beaMoney = (
 	await db.doc(`fellowFinance/${portal.contactIdOf('bea@fellow.io', 'Bea Fellow')}`).get()
 ).data();
-check(beaMoney.growth === '', 'a spreadsheet error (#DIV/0!) is read as empty');
+check(
+	beaMoney.growth === '',
+	'a spreadsheet error (#DIV/0! with its explanation) is read as empty'
+);
+check(
+	(await db.doc('task/t2').get()).data().assigneeUid === 'u2',
+	'an automation task left with whoever moved the contact goes to its owner'
+);
+check(
+	(await db.doc('task/t3').get()).data().assigneeUid === 'u1',
+	'a manual task keeps its assignee'
+);
 
 console.log('Second sync, same sheet');
 const second = await sync('second');
