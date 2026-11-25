@@ -59,6 +59,9 @@ Firestore; Claude's `flf_get_contact` shows the portal fields but no PERMA or in
   meeting); its **last activity** is the latest (CRM `Last Meeting (N8N)`, Profiles
   `Last Interaction`, a meeting), or a later Hub activity. Contacts imported before this rule are
   corrected once (`sheetDates`).
-- A spreadsheet error in a cell (`#DIV/0!`, `#N/A`, `#REF!`…) is read as empty.
+- A spreadsheet error in a cell (`#DIV/0!`, `#N/A`, `#REF!`…) is read as empty, also when the sheet
+  appends its explanation (`#DIV/0! (Function DIVIDE parameter 2 cannot be zero.)`).
+- A contact's open automation tasks belong to its owner. That one-time correction (`sheetDates`) also
+  hands over tasks left with whoever moved the contact before an owner was set in the Hub.
 - Rows not imported (team members, unknown stages, test applications) are listed in the
   import's run log under "skipped".

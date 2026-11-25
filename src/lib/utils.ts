@@ -48,11 +48,16 @@ export function listenDoc<T = DocumentData>(
 	return onSnapshot(ref, (d) => onData(d.exists() ? { id: d.id, ...(d.data() as T) } : null));
 }
 
-/** A Firestore timestamp, millis or Date as a Date. */
+/** A Firestore timestamp, millis, ISO string or Date as a Date. */
 export function toDate(value: unknown): Date | null {
 	if (!value) return null;
 	if (value instanceof Date) return value;
 	if (typeof value === 'number') return new Date(value);
+	// ISO strings, as n8n's API returns them (startedAt); anything unparseable reads as no date.
+	if (typeof value === 'string') {
+		const d = new Date(value);
+		return Number.isNaN(d.getTime()) ? null : d;
+	}
 	if (typeof value === 'object' && value && 'toDate' in value) {
 		return (value as { toDate: () => Date }).toDate();
 	}
