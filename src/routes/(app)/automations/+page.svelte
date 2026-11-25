@@ -55,7 +55,8 @@
 	}
 	let n8n = $state<N8nWorkflow[] | null>(null);
 	let n8nError = $state<string | null>(null);
-	let flfOnly = $state(false);
+	// FLF's workflows first; the rest of the n8n instance is one click away.
+	let flfOnly = $state(true);
 	let shown = $derived((n8n ?? []).filter((w) => !flfOnly || w.flf));
 	function loadN8n() {
 		n8nError = null;

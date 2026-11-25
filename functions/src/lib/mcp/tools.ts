@@ -427,8 +427,8 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			title: 'List n8n workflows',
 			description:
 				'Every n8n workflow: active or not, latest run and its status, failures in the last 24 h, ' +
-				'and its link in n8n. flf_only=true keeps the FLF ones. Read only: nothing in n8n runs or changes.',
-			inputSchema: z.object({ flf_only: z.boolean().default(false) }),
+				'and its link in n8n. FLF ones only unless flf_only=false. Read only: nothing in n8n runs or changes.',
+			inputSchema: z.object({ flf_only: z.boolean().default(true) }),
 			annotations: read
 		},
 		run(

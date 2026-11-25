@@ -93,7 +93,7 @@
 		<div class="flex flex-col items-center text-center">
 			<Logo size="lg" />
 			<p class="mt-5 eyebrow">Founders for Life Fellowship</p>
-			<h1 class="mt-2 text-2xl font-bold">Sherpa Hub</h1>
+			<h1 class="mt-2 text-2xl font-bold">Fellowship Hub</h1>
 			<p class="mt-1 text-sm text-ink-soft">Sign in to continue.</p>
 		</div>
 

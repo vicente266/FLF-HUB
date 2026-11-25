@@ -174,9 +174,24 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 		return team.find((u) => lower(u.name) === n || lower(u.name).split(' ')[0] === n) ?? null;
 	};
 
+	// The team (Profiles role Admin or Sherpa) are users of the Hub, not contacts: their CRM rows,
+	// applications, check-ins and reports stay out of the Fellow data.
+	const teamEmails = new Set(
+		tabs.profiles.missing.length
+			? []
+			: tabs.profiles.rows
+					.filter((r) => ['admin', 'sherpa'].includes(lower(r['Role'])))
+					.flatMap((r) => emailsOf(r['Email']))
+	);
+	const isTeam = (cell: string) => emailsOf(cell).some((e) => teamEmails.has(e));
+
 	if (!tabs.crm.missing.length) {
 		for (const r of tabs.crm.rows) {
 			if (!r['Name'] && !r['Email']) continue;
+			if (isTeam(r['Email'])) {
+				p.skipped.push(`CRM: "${r['Name']}" is on the team (Profiles role), not a contact`);
+				continue;
+			}
 			const stage = STAGE_MAP[lower(r['Stage'])];
 			if (!stage) {
 				p.skipped.push(`CRM: unknown stage "${r['Stage']}"`);
@@ -248,6 +263,7 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 	if (!tabs.applications.missing.length) {
 		for (const r of tabs.applications.rows) {
 			if (!r['Email'] && !r['Name']) continue;
+			if (isTeam(r['Email'])) continue;
 			// Test submissions of the portal's form are not applicants.
 			if (/@example\.(com|org)$/.test(primaryEmail(r['Email'])) || /^test\b/i.test(r['Company'])) {
 				p.skipped.push(`Applications: test row "${r['Name']}" (${r['Company'] || 'no company'})`);
