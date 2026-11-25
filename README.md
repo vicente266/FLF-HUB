@@ -73,7 +73,8 @@ The web app is a static site on **Hostinger** (`hub.foundersforlifefellowship.co
 3. Google Cloud → APIs & Services → Credentials: restrict the browser API key to HTTP referrer
    `https://hub.foundersforlifefellowship.com/*`.
 4. Secrets: `firebase functions:secrets:set` for `SLACK_WEBHOOK_URL`, `FLF_MCP_KEY`, `N8N_API_KEY`
-   (`unset` for the ones not set up yet: Secret Manager refuses empty values).
+   A connection not set up yet gets `-` (or `unset`): Secret Manager can't store an empty value,
+   and the code reads either as not configured.
 5. `firebase deploy --only functions,firestore` (functions, rules and indexes).
 6. Sign in once, set your `user/{uid}.role` to `admin` in the Firestore console, sign in again.
 

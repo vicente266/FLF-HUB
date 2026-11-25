@@ -31,10 +31,14 @@ const n8nApiKey = defineSecret('N8N_API_KEY');
 /** Signs the Claude connector's clients and tokens and seals its keys (docs/claude-connector.md). */
 const flfMcpKey = defineSecret('FLF_MCP_KEY');
 
-/** An optional secret's value; `unset` (Secret Manager can't store an empty value) or blank means not configured. */
+/**
+ * An optional secret's value, or undefined when it is not set up yet. Secret Manager can't store an
+ * empty value, so a connection not configured yet holds a placeholder: `-` or `unset` (or blank).
+ */
+const NOT_SET = new Set(['', '-', 'unset']);
 const optional = (s: { value(): string }): string | undefined => {
 	const v = s.value().trim();
-	return v && v !== 'unset' ? v : undefined;
+	return NOT_SET.has(v.toLowerCase()) ? undefined : v;
 };
 
 const userLogger = utils.createLogger('user');
