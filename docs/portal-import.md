@@ -6,15 +6,15 @@ it never writes to it, never calls the webhook and never runs, edits or publishe
 
 ## What is read
 
-| Tab            | Becomes                                                    | Notes                                                                                                                                                   |
-| -------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CRM `         | Fellow contacts                                            | Stage: Targets → `target`, FOF – They are Aware → `aware`, FOF – Teaser Received → `teaser`, Fellows → `fellow`, Lost → `lost`. Status → next step.     |
-| `Profiles`     | Fellow contacts (Role = Fellow only)                       | Cohort, pledge, Sherpa (→ owner when a team member has that name), archetype, location. Income → `fellowFinance` (restricted).                          |
-| `Applications` | Fellow contacts in `application`                           | Only when the person is not already in the CRM tab or Profiles.                                                                                         |
-| `Tasks`        | Tasks with no contact                                      | Owner matched by name; Done and Cancelled are done.                                                                                                     |
-| `Perma`        | `wellbeing`                                                | Health data: permission `wellbeing.any.read`, served only through `portal:wellbeing.*`, **never to Claude**, no Firestore rule (browser can't read it). |
-| `Wealth`       | `fellowFinance` totals per report and row type             | Permission `wealth.any.read`, never to Claude.                                                                                                          |
-| `Events`       | `event` + a `meeting` entry on each participant's timeline | Written by n8n "Calendar → Events database". Participants (CRM names) matched to contacts by name. Events page, `flf_list_events`.                      |
+| Tab            | Becomes                                                    | Notes                                                                                                                                                                                                 |
+| -------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CRM `         | Fellow contacts                                            | Stage: Targets → `target`, FOF – They are Aware → `aware`, FOF – Teaser Received → `teaser`, Fellows → `fellow`, Lost → `lost`. Status → next step.                                                   |
+| `Profiles`     | Fellow contacts (Role = Fellow only)                       | Cohort, pledge (TRUE or a date = signed), Sherpa (→ owner: a team row's Username, Name or first name, then the Hub user with that email), archetype, location. Income → `fellowFinance` (restricted). |
+| `Applications` | Fellow contacts in `application`                           | Only when the person is not already in the CRM tab or Profiles.                                                                                                                                       |
+| `Tasks`        | Tasks with no contact                                      | Owner matched by name; Done and Cancelled are done.                                                                                                                                                   |
+| `Perma`        | `wellbeing`                                                | Health data: permission `wellbeing.any.read`, served only through `portal:wellbeing.*`, **never to Claude**, no Firestore rule (browser can't read it).                                               |
+| `Wealth`       | `fellowFinance` totals per report and row type             | Permission `wealth.any.read`, never to Claude.                                                                                                                                                        |
+| `Events`       | `event` + a `meeting` entry on each participant's timeline | Written by n8n "Calendar → Events database". Participants (CRM names) matched to contacts by name. Events page, `flf_list_events`.                                                                    |
 
 Never read: `PasswordHash`, `Reset Token`, `Reset Expiry`, `Permissions`, `Read Versions`
 (`TABS` in `functions/src/lib/portal/config.ts` lists the only columns read). Survey, Content
