@@ -2,10 +2,9 @@ import { HttpsError } from 'firebase-functions/v2/https';
 import { db } from '../../firestore';
 import { serverTimestamp, increment, str, createLogger, Timestamp } from '../utils';
 import * as crm from '../crm/index';
-import { stageOf, STALE_DAYS, type ContactType } from '../crm/config';
-import * as user from '../user';
+import { MEETING_STAGES, nextStepOf, stageOf, STALE_DAYS, type ContactType } from '../crm/config';
 import * as connections from '../connections/index';
-import { AUTOMATIONS, automation } from './config';
+import { AUTOMATIONS, N8N_AUTOMATIONS, automation } from './config';
 
 const logger = createLogger('automations');
 export const collection = db.collection('automation');
@@ -72,59 +71,6 @@ async function addTask(
 	});
 }
 
-/** The Sherpa with the fewest open contacts (one count query per Sherpa). */
-async function leastLoadedSherpa() {
-	const sherpas = await user.sherpas();
-	let best: (typeof sherpas)[number] | null = null;
-	let bestCount = Infinity;
-	for (const s of sherpas) {
-		const snap = await crm.contacts
-			.where('ownerUid', '==', s.uid)
-			.where('open', '==', true)
-			.count()
-			.get();
-		if (snap.data().count < bestCount) {
-			best = s;
-			bestCount = snap.data().count;
-		}
-	}
-	return best;
-}
-
-/** `contact/{id}` created. */
-export async function onContactCreated(id: string, c: crm.Contact, slackUrl: string | undefined) {
-	await run(
-		'assign-owner',
-		async () => {
-			if (c.ownerUid) return null;
-			const s = await leastLoadedSherpa();
-			if (!s) throw new Error('No Sherpa to assign: mark at least one in Admin → Users.');
-			const name = s.name || s.email;
-			await crm.contacts.doc(id).update({ ownerUid: s.uid, ownerName: name });
-			await crm.logActivity(id, 'automation', `Assigned to ${name}`, 'Automation');
-			// The stage follow-up for the first stage needs the owner, so it runs here.
-			const stage = stageOf(c.type, c.stage);
-			if (stage?.followUp)
-				await addTask(id, c.name, s.uid, stage.followUp, stage.followUpDays ?? 3);
-			return `Assigned to ${name}`;
-		},
-		id
-	);
-
-	await run(
-		'new-lead-alert',
-		async () => {
-			if (c.source !== 'website') return null;
-			const sent = await connections.slack(
-				slackUrl,
-				`New ${c.type} application: *${c.name}*${c.company ? ` (${c.company})` : ''} — ${c.email}`
-			);
-			return sent ? 'Posted to Slack' : null;
-		},
-		id
-	);
-}
-
 /** `contact/{id}` moved to another stage. */
 export async function onStageChanged(id: string, c: crm.Contact) {
 	await run(
@@ -132,11 +78,64 @@ export async function onStageChanged(id: string, c: crm.Contact) {
 		async () => {
 			const stage = stageOf(c.type as ContactType, c.stage);
 			if (!stage?.followUp || !c.ownerUid) return null;
-			await addTask(id, c.name, c.ownerUid, stage.followUp, stage.followUpDays ?? 3);
+			await addTask(id, crm.displayName(c), c.ownerUid, stage.followUp, stage.followUpDays ?? 3);
 			return `Task "${stage.followUp}" for ${c.ownerName}`;
 		},
 		id
 	);
+}
+
+/** `contact/{id}` got another next step (set in the Hub; sheet imports don't fire it). */
+export async function onNextStepChanged(id: string, c: crm.Contact) {
+	await run(
+		'next-step-task',
+		async () => {
+			const step = nextStepOf(c.nextStep);
+			if (!step || !c.ownerUid) return null;
+			await addTask(id, crm.displayName(c), c.ownerUid, step.task, step.days);
+			return `Task "${step.task}" for ${c.ownerName}`;
+		},
+		id
+	);
+}
+
+/** A meeting the portal sync just brought in. */
+export interface NewMeeting {
+	contactId: string;
+	title: string;
+	date: Date | null;
+}
+
+/**
+ * After a sync: for each new, recent meeting with a contact in a stage a meeting can move forward,
+ * ask the owner whether to move it. One task per contact per sync.
+ */
+export async function meetingSuggestions(meetings: NewMeeting[]) {
+	const recent = Date.now() - 14 * DAY;
+	const latest = new Map<string, NewMeeting>();
+	for (const m of meetings) {
+		if (!m.date || m.date.getTime() < recent) continue;
+		const prev = latest.get(m.contactId);
+		if (!prev || (prev.date?.getTime() ?? 0) < m.date.getTime()) latest.set(m.contactId, m);
+	}
+	for (const m of latest.values()) {
+		await run(
+			'meeting-next-stage',
+			async () => {
+				const doc = await crm.contacts.doc(m.contactId).get();
+				const c = doc.data() as crm.Contact | undefined;
+				// Fellows only: the calendar meetings are with the portal's CRM people.
+				if (!c || c.type !== 'fellow' || !c.ownerUid || !MEETING_STAGES.includes(c.stage))
+					return null;
+				const stage = stageOf(c.type, c.stage)?.label ?? c.stage;
+				const day = m.date!.toISOString().slice(0, 10);
+				const title = `Met on ${day} (“${m.title}”): move from ${stage} to the next stage?`;
+				await addTask(m.contactId, crm.displayName(c), c.ownerUid, title, 1);
+				return `Asked ${c.ownerName} about ${crm.displayName(c)}`;
+			},
+			m.contactId
+		);
+	}
 }
 
 /** Daily: flag open contacts with no activity for STALE_DAYS. */
@@ -156,7 +155,7 @@ export async function staleContacts(slackUrl: string | undefined) {
 			if (c.ownerUid)
 				await addTask(
 					doc.id,
-					c.name,
+					crm.displayName(c),
 					c.ownerUid,
 					`No activity for ${STALE_DAYS} days: check in`,
 					1
@@ -197,15 +196,8 @@ export async function portalSync() {
 	});
 }
 
-export async function sheetsSync() {
-	await run('sheets-sync', async () => {
-		const n = await connections.syncSheets();
-		return n ? `${n} sheets synced` : null;
-	});
-}
-
 export const actions = {
-	'config.get': async () => ({ automations: AUTOMATIONS }),
+	'config.get': async () => ({ automations: AUTOMATIONS, n8n: N8N_AUTOMATIONS }),
 
 	toggle: async (p: any) => {
 		const id = str(p.id, 'id');

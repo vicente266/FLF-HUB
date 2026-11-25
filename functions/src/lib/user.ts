@@ -72,11 +72,3 @@ export async function updateAccess(
 ): Promise<void> {
 	await collection.doc(uid).update({ role, groups, sherpa, updatedAt: serverTimestamp() });
 }
-
-/** Signed-in team members who are Sherpas, for assignment. */
-export async function sherpas(): Promise<{ uid: string; email: string; name: string }[]> {
-	const snap = await collection.where('sherpa', '==', true).get();
-	return snap.docs
-		.filter((d) => d.data().role !== 'guest')
-		.map((d) => ({ uid: d.id, email: d.data().email, name: d.data().name ?? '' }));
-}

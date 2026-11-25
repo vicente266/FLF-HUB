@@ -4,10 +4,15 @@ import { serverTimestamp, str, oneOf } from '../utils';
 import { callVia } from '../call-context';
 import {
 	CONTACT_TYPES,
+	NEXT_STEPS,
 	PIPELINES,
+	SEGMENTS,
+	STRATEGY_COLLECTION,
+	STRATEGY_STATUSES,
 	SOURCES,
 	STALE_DAYS,
 	firstStage,
+	nextStepOf,
 	stageOf,
 	type ContactType,
 	type Source
@@ -32,6 +37,12 @@ export interface Contact {
 	tags: string[];
 	notes: string;
 	needsAttention: boolean;
+	/** One of NEXT_STEPS, or empty. */
+	nextStep?: string;
+	/** Partners only: one of SEGMENTS (VC fund, university…), or empty. */
+	segment?: string;
+	/** Partners only: the go-to-market strategy it belongs to, or empty. */
+	strategyId?: string;
 	/** What the portal sheet says, when the contact came from it (read-only copy). */
 	portal?: {
 		from: string;
@@ -39,6 +50,9 @@ export interface Contact {
 		pledgeSigned: boolean | null;
 		sherpaName: string | null;
 		nextStep: string | null;
+		/** Stage and next step the sheet had at the last sync ("whichever changed last"). */
+		sheetStage?: string;
+		sheetNextStep?: string;
 		scoring: string | null;
 		reasonLost: string | null;
 		sheetNotes: string | null;
@@ -61,7 +75,15 @@ const who = (auth: any) => {
 };
 
 export function config() {
-	return { types: CONTACT_TYPES, sources: SOURCES, pipelines: PIPELINES, staleDays: STALE_DAYS };
+	return {
+		types: CONTACT_TYPES,
+		sources: SOURCES,
+		pipelines: PIPELINES,
+		staleDays: STALE_DAYS,
+		nextSteps: NEXT_STEPS,
+		segments: SEGMENTS,
+		strategyStatuses: STRATEGY_STATUSES
+	};
 }
 
 /** The team's time zone: a due date is the end of that day here. */
@@ -73,7 +95,7 @@ const TIME_ZONE = 'Europe/Madrid';
  */
 export function endOfDay(date: string): Date {
 	const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
-	if (!m) throw new HttpsError('invalid-argument', 'Invalid due date: use YYYY-MM-DD.');
+	if (!m) throw new HttpsError('invalid-argument', 'Pick a valid due date.');
 	const utc = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 59, 999);
 	// Madrid's offset at that moment (summer or winter time).
 	const parts = new Intl.DateTimeFormat('en-US', {
@@ -121,13 +143,50 @@ export async function logActivity(
 	await batch.commit();
 }
 
-/** Fields an editor may set on create or update. */
-function fields(p: any) {
+export const strategies = db.collection(STRATEGY_COLLECTION);
+
+/**
+ * Go-to-market fields, only those present in the payload, so an update that leaves them out
+ * (Claude's flf_update_contact, say) keeps what is there.
+ */
+function gtmFields(p: any) {
+	const out: { segment?: string; strategyId?: string } = {};
+	if (p.segment !== undefined) {
+		const s = str(p.segment, 'segment', false);
+		if (s && !SEGMENTS.some((x) => x.id === s))
+			throw new HttpsError('invalid-argument', 'Invalid segment.');
+		out.segment = s;
+	}
+	if (p.strategyId !== undefined) out.strategyId = str(p.strategyId, 'strategyId', false);
+	return out;
+}
+
+async function checkStrategy(id: string | undefined) {
+	if (id && !(await strategies.doc(id).get()).exists)
+		throw new HttpsError('not-found', 'Strategy not found.');
+}
+
+/** How a contact is named in tasks and messages: a Partner without a main contact by its organisation. */
+export const displayName = (c: { name?: string; company?: string }) =>
+	c.name || c.company || 'Unnamed';
+
+/**
+ * Fields an editor may set on create or update. A name is required, except for a Partner, which
+ * needs its organisation (company) and may have no main contact yet.
+ */
+function fields(p: any, type: string) {
+	const company = str(p.company, 'company', false);
+	const name = str(p.name, 'name', false);
+	if (type === 'partner' ? !company : !name)
+		throw new HttpsError(
+			'invalid-argument',
+			type === 'partner' ? 'Missing the organisation.' : 'Missing name.'
+		);
 	return {
-		name: str(p.name, 'name'),
+		name,
 		email: str(p.email, 'email', false).toLowerCase(),
 		phone: str(p.phone, 'phone', false),
-		company: str(p.company, 'company', false),
+		company,
 		linkedin: str(p.linkedin, 'linkedin', false),
 		notes: str(p.notes, 'notes', false),
 		tags: Array.isArray(p.tags)
@@ -146,16 +205,23 @@ export async function findByEmail(email: string) {
 export async function create(p: any, by: string, uid: string): Promise<string> {
 	const type = oneOf(p.type, CONTACT_TYPES, 'type');
 	const source = p.source ? oneOf(p.source, SOURCES, 'source') : 'manual';
-	const f = fields(p);
+	const f = fields(p, type);
 	if (f.email && (await findByEmail(f.email))) {
-		throw new HttpsError('already-exists', `A contact with ${f.email} already exists.`);
+		throw new HttpsError(
+			'already-exists',
+			`A contact with ${f.email} already exists. Search the CRM to open it.`
+		);
 	}
+	const gtm: { segment?: string; strategyId?: string } =
+		type === 'partner' ? { segment: '', strategyId: '', ...gtmFields(p) } : {};
+	await checkStrategy(gtm.strategyId);
 	const stage = firstStage(type);
 	const ref = contacts.doc();
 	await ref.set({
 		type,
 		source,
 		...f,
+		...gtm,
 		stage,
 		open: true,
 		ownerUid: null,
@@ -183,14 +249,37 @@ export const actions = {
 
 	'contact.update': async (p: any, auth: any) => {
 		const id = str(p.id, 'id');
-		const f = fields(p);
+		const doc = await contacts.doc(id).get();
+		if (!doc.exists) throw new HttpsError('not-found', 'Contact not found.');
+		// Only the fields sent change: a missing one keeps its value instead of being emptied (the
+		// screen sends them all; Claude's flf_update_contact sends only what it changes).
+		const cur = doc.data() as Contact;
+		const sent = Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined));
+		const f = fields(
+			{
+				name: cur.name,
+				email: cur.email,
+				phone: cur.phone,
+				company: cur.company,
+				linkedin: cur.linkedin,
+				notes: cur.notes,
+				tags: cur.tags,
+				...sent
+			},
+			cur.type
+		);
+		// Partner fields belong to Partners only; a strategy is checked only when it changes, so a
+		// Partner whose strategy was deleted can still be saved.
+		const gtm = cur.type === 'partner' ? gtmFields(p) : {};
+		if (gtm.strategyId !== undefined && gtm.strategyId !== (cur.strategyId ?? ''))
+			await checkStrategy(gtm.strategyId);
 		if (f.email) {
 			const other = await findByEmail(f.email);
 			if (other && other.id !== id) {
 				throw new HttpsError('already-exists', `Another contact already uses ${f.email}.`);
 			}
 		}
-		await contacts.doc(id).update({ ...f, updatedAt: serverTimestamp() });
+		await contacts.doc(id).update({ ...f, ...gtm, updatedAt: serverTimestamp() });
 		await logActivity(id, 'updated', 'Details updated', who(auth));
 		return { ok: true };
 	},
@@ -214,6 +303,19 @@ export const actions = {
 			from: c.stage,
 			to: stage.id
 		});
+		return { ok: true };
+	},
+
+	'contact.nextStep': async (p: any, auth: any) => {
+		const id = str(p.id, 'id');
+		const value = str(p.nextStep, 'nextStep', false);
+		const step = nextStepOf(value);
+		if (value && !step) throw new HttpsError('invalid-argument', 'Invalid next step.');
+		const doc = await contacts.doc(id).get();
+		if (!doc.exists) throw new HttpsError('not-found', 'Contact not found.');
+		if (((doc.data() as Contact).nextStep ?? '') === value) return { ok: true };
+		await doc.ref.update({ nextStep: value, updatedAt: serverTimestamp() });
+		await logActivity(id, 'updated', `Next step: ${step?.label ?? 'none'}`, who(auth));
 		return { ok: true };
 	},
 
@@ -244,6 +346,63 @@ export const actions = {
 		open.forEach((t) => batch.delete(t.ref));
 		await batch.commit();
 		return { ok: true };
+	},
+
+	'strategy.save': async (p: any, auth: any) => {
+		const id = str(p.id, 'id', false);
+		// Editing: fields not sent keep their stored value (Claude may send only the one it changes).
+		if (id) {
+			const stored = (await strategies.doc(id).get()).data();
+			if (!stored) throw new HttpsError('not-found', 'Strategy not found.');
+			const sent = Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined));
+			p = { ...stored, ...sent };
+		}
+		const name = str(p.name, 'name');
+		if (name.length > 120)
+			throw new HttpsError('invalid-argument', 'Shorten the name to 120 characters or fewer.');
+		const segment = str(p.segment, 'segment', false);
+		if (segment && !SEGMENTS.some((x) => x.id === segment))
+			throw new HttpsError('invalid-argument', 'Invalid segment.');
+		const status = oneOf(p.status || 'active', STRATEGY_STATUSES, 'status');
+		const description = str(p.description, 'description', false);
+		if (description.length > 5000)
+			throw new HttpsError(
+				'invalid-argument',
+				'Shorten the approach to 5,000 characters or fewer.'
+			);
+		const body = {
+			name,
+			segment,
+			status,
+			description,
+			updatedBy: who(auth),
+			updatedAt: serverTimestamp()
+		};
+		if (id) {
+			await strategies.doc(id).set(body, { merge: true });
+			return { id };
+		}
+		const ref = await strategies.add({ ...body, createdAt: serverTimestamp() });
+		return { id: ref.id };
+	},
+
+	'strategy.delete': async (p: any) => {
+		const id = str(p.id, 'id');
+		const ref = strategies.doc(id);
+		if (!(await ref.get()).exists) throw new HttpsError('not-found', 'Strategy not found.');
+		// Its Partners stay; they just lose the link (in batches, however many there are).
+		let unlinked = 0;
+		for (;;) {
+			const linked = await contacts.where('strategyId', '==', id).limit(400).get();
+			if (linked.empty) break;
+			const batch = db.batch();
+			for (const d of linked.docs)
+				batch.update(d.ref, { strategyId: '', updatedAt: serverTimestamp() });
+			await batch.commit();
+			unlinked += linked.size;
+		}
+		await ref.delete();
+		return { ok: true, unlinked };
 	},
 
 	'note.add': async (p: any, auth: any) => {

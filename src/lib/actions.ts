@@ -25,5 +25,5 @@ export async function callAction<Res = unknown>(
 /** A readable message from a failed call. */
 export function errorText(err: unknown): string {
 	if (err && typeof err === 'object' && 'message' in err) return String(err.message);
-	return 'Something went wrong.';
+	return 'Something went wrong. Try again.';
 }

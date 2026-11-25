@@ -116,7 +116,7 @@
 							onclick={approve}
 							disabled={busy || (usesPassword() && !password)}
 						>
-							Approve
+							Approve access
 						</button>
 					</div>
 				{/if}

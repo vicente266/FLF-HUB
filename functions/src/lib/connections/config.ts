@@ -5,7 +5,7 @@
  * Manager entries, named in `secrets`, set with `firebase functions:secrets:set <NAME>`.
  */
 
-export type Category = 'inbound' | 'data' | 'messaging' | 'platform' | 'ai';
+export type Category = 'platform' | 'messaging' | 'ai';
 
 /** `live`: implemented here. `planned`: on the roadmap, shown with what it will need. */
 export type Availability = 'live' | 'planned';
@@ -37,39 +37,19 @@ export interface Connector {
 }
 
 export const CATEGORIES: Record<Category, string> = {
-	inbound: 'Inbound',
-	data: 'Data sources',
-	messaging: 'Messaging',
 	platform: 'FLF platform',
+	messaging: 'Messaging',
 	ai: 'AI'
 };
 
 export const CONNECTORS: Connector[] = [
-	{
-		id: 'website-forms',
-		name: 'Website forms',
-		category: 'inbound',
-		availability: 'live',
-		description:
-			'Applications from foundersforlifefellowship.com (Prospective Fellows, Gurus, Investors) arrive as CRM contacts in their first stage.',
-		feeds: ['CRM', 'Automations'],
-		secrets: ['LEAD_WEBHOOK_TOKEN'],
-		settings: [],
-		setup: [
-			'Developer only: set the token with `firebase functions:secrets:set LEAD_WEBHOOK_TOKEN` and deploy.',
-			'Make each website form POST JSON to the `crmLeadWebhook` URL with the header `x-flf-token: <token>`.',
-			'Body: `type` (fellow | guru | investor), `name`, `email`, optional `company`, `linkedin`, `phone`, `message`.',
-			'Send one test application and check it appears in CRM and here as "Last event".'
-		],
-		testable: true
-	},
 	{
 		id: 'portal-sheet',
 		name: 'FLF Portal sheet',
 		category: 'platform',
 		availability: 'live',
 		description:
-			'The portal’s backend Google Sheet (Profiles, Applications, CRM, Tasks, Perma, Wealth). The Hub only READS it, nightly and on demand: the portal and n8n keep writing to it. The check flags missing columns (schema drift).',
+			'The portal’s backend Google Sheet (Profiles, Applications, CRM, Tasks, Perma, Wealth). The Hub only reads it, every night and when you press Sync now; the portal and n8n keep writing to it. Test connection checks that no columns are missing.',
 		feeds: ['CRM', 'Tasks', 'Reports', 'Wellbeing'],
 		secrets: [],
 		settings: [
@@ -81,63 +61,9 @@ export const CONNECTORS: Connector[] = [
 			}
 		],
 		setup: [
-			'Share the sheet with the Cloud Functions service account as **Viewer** (never Editor: the Hub must not be able to write to production).',
-			'Press Test: every tab and column the import needs must be found.',
-			'Press Dry run to see what would be imported, then Sync now. It runs again every night.'
-		],
-		testable: true
-	},
-	{
-		id: 'google-sheets',
-		name: 'Google Sheets',
-		category: 'data',
-		availability: 'live',
-		description:
-			'Reads ranges from FLF spreadsheets (cohort tracking, Fellow metrics, finances) every night and shows them in Reports.',
-		feeds: ['Reports'],
-		secrets: [],
-		settings: [
-			{
-				key: 'sources',
-				label: 'Sheets',
-				help: 'One per line: `Name | spreadsheet id | range`, e.g. `Cohort | 1AbC… | Alpha!A1:H200`.',
-				kind: 'list'
-			}
-		],
-		setup: [
-			'Share each spreadsheet (Viewer) with the Cloud Functions service account `<project-id>@appspot.gserviceaccount.com`.',
-			'Add one line per sheet under Settings, then press Test.',
-			'Data refreshes nightly; "Sync now" refreshes it immediately.'
-		],
-		testable: true
-	},
-	{
-		id: 'bigquery',
-		name: 'BigQuery',
-		category: 'data',
-		availability: 'live',
-		description:
-			'Warehouse for reporting: CRM history exported nightly, plus any dataset FLF already has. Reports query its views.',
-		feeds: ['Reports'],
-		secrets: [],
-		settings: [
-			{
-				key: 'projectId',
-				label: 'Project id',
-				help: 'GCP project that holds the dataset.',
-				kind: 'text'
-			},
-			{
-				key: 'dataset',
-				label: 'Dataset',
-				help: 'Dataset the Hub writes to and reads from, e.g. `flf`.',
-				kind: 'text'
-			}
-		],
-		setup: [
-			'Create the dataset in BigQuery (location EU).',
-			'Grant the Cloud Functions service account "BigQuery Data Editor" on the dataset and "BigQuery Job User" on the project.',
-			'Fill in project id and dataset, then press Test.'
+			'Developer only: share the sheet with the Cloud Functions service account as **Viewer** (never Editor: the Hub must not be able to write to production).',
+			'Press Test connection: every tab and column the import needs must be found.',
+			'Press Preview import to see what would be imported, then Sync now. It runs again every night.'
 		],
 		testable: true
 	},
@@ -154,51 +80,7 @@ export const CONNECTORS: Connector[] = [
 		setup: [
 			'In Slack, create an app with an Incoming Webhook for the team channel.',
 			'Developer only: `firebase functions:secrets:set SLACK_WEBHOOK_URL` with the webhook URL, then deploy.',
-			'Press Test: a message should appear in the channel.'
-		],
-		testable: true
-	},
-	{
-		id: 'uptime',
-		name: 'Uptime (built in)',
-		category: 'platform',
-		availability: 'live',
-		description:
-			'Every hour the Hub opens each address (GET only) and records the status and response time: the website, the portal, the Hub. Never calls the n8n webhook, which would run production actions.',
-		feeds: ['Health'],
-		secrets: [],
-		settings: [
-			{
-				key: 'urls',
-				label: 'Addresses',
-				help: 'One per line. GET only; no webhooks that change data.',
-				kind: 'list'
-			}
-		],
-		setup: ['List the public addresses to watch, then press Test.'],
-		testable: true
-	},
-	{
-		id: 'checkly',
-		name: 'Checkly',
-		category: 'platform',
-		availability: 'live',
-		description:
-			'External monitoring (free Hobby plan): Checkly checks the website, the portal and the Hub every few minutes from outside, even a portal sign-in. The Hub shows its pass/fail in Health.',
-		feeds: ['Health'],
-		secrets: ['CHECKLY_API_KEY'],
-		settings: [
-			{
-				key: 'accountId',
-				label: 'Account id',
-				help: 'Checkly → Account settings → General.',
-				kind: 'text'
-			}
-		],
-		setup: [
-			'Create a free Checkly account and add API or browser checks for the website, the portal login page and the Hub.',
-			'Checkly → User settings → API keys: create a read key. Developer only: `firebase functions:secrets:set CHECKLY_API_KEY`, deploy.',
-			'Put the account id here and press Test.'
+			'Press Test connection: a message should appear in the channel.'
 		],
 		testable: true
 	},
@@ -232,63 +114,8 @@ export const CONNECTORS: Connector[] = [
 		testable: true
 	},
 	{
-		id: 'fellow-portal',
-		name: 'Fellow Portal',
-		category: 'platform',
-		availability: 'planned',
-		description:
-			'portal.foundersforlifefellowship.com. Accepted Fellows get portal access from the CRM; portal activity (sessions, retreats, check-ins) flows back to their timeline.',
-		feeds: ['CRM', 'Reports', 'Health'],
-		secrets: ['PORTAL_API_KEY'],
-		settings: [
-			{ key: 'baseUrl', label: 'Portal API URL', help: 'Base URL of the portal API.', kind: 'text' }
-		],
-		setup: [
-			'Reading the portal’s data is live through the FLF Portal sheet connection.',
-			'Writing back (giving an accepted Fellow portal access) waits until the portal moves off the sheet: n8n is production.'
-		],
-		testable: false
-	},
-	{
-		id: 'gmail',
-		name: 'Gmail',
-		category: 'messaging',
-		availability: 'planned',
-		description:
-			'Sends automation emails (application received, interview invite) from the FLF mailbox and logs email threads on the contact timeline.',
-		feeds: ['CRM', 'Automations'],
-		secrets: ['GMAIL_CREDENTIALS'],
-		settings: [
-			{ key: 'sender', label: 'Send as', help: 'Mailbox emails are sent from.', kind: 'text' }
-		],
-		setup: [
-			'Google Workspace admin: service account with domain-wide delegation, scope gmail.send.',
-			'Store its JSON key as `GMAIL_CREDENTIALS`.'
-		],
-		testable: false
-	},
-	{
-		id: 'google-calendar',
-		name: 'Google Calendar',
-		category: 'messaging',
-		availability: 'planned',
-		description: 'Interviews and retreats on the contact timeline; interview stage books a slot.',
-		feeds: ['CRM', 'Tasks'],
-		secrets: ['GMAIL_CREDENTIALS'],
-		settings: [
-			{
-				key: 'calendarId',
-				label: 'Calendar',
-				help: 'Shared calendar for interviews.',
-				kind: 'text'
-			}
-		],
-		setup: ['Reuses the Gmail service account with the calendar scope added.'],
-		testable: false
-	},
-	{
 		id: 'claude-connector',
-		name: 'Claude connector (MCP)',
+		name: 'Claude connector',
 		category: 'ai',
 		availability: 'live',
 		description:
@@ -304,19 +131,6 @@ export const CONNECTORS: Connector[] = [
 			'Claude Code: `claude mcp add --transport http --scope user flf-hub <address>`, then `/mcp` to sign in.'
 		],
 		testable: true
-	},
-	{
-		id: 'claude-api',
-		name: 'Claude AI features (Anthropic API)',
-		category: 'ai',
-		availability: 'planned',
-		description:
-			'AI inside the Hub itself: summarise applications, draft follow-ups, score fit, like the AI tools in the EBS Hub.',
-		feeds: ['CRM', 'Reports'],
-		secrets: ['ANTHROPIC_API_KEY'],
-		settings: [],
-		setup: ['Store an Anthropic API key as `ANTHROPIC_API_KEY`.'],
-		testable: false
 	}
 ];
 

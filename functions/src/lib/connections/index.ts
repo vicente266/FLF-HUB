@@ -1,5 +1,4 @@
 import { HttpsError } from 'firebase-functions/v2/https';
-import { BigQuery } from '@google-cloud/bigquery';
 import { GoogleAuth } from 'google-auth-library';
 import { readFileSync } from 'fs';
 import { db } from '../../firestore';
@@ -7,10 +6,10 @@ import { useEmulator } from '../../env';
 import { serverTimestamp, str, createLogger } from '../utils';
 import { CATEGORIES, CONNECTORS, connector } from './config';
 import { CONNECTION_COLLECTION, CONNECTOR_URL } from '../mcp/config';
+import { N8N_AUTOMATIONS } from '../automations/config';
 
 const logger = createLogger('connections');
 export const collection = db.collection('connection');
-export const snapshots = db.collection('sheetSnapshot');
 
 export type Status = 'ok' | 'error' | 'not_configured' | 'planned';
 
@@ -27,8 +26,6 @@ export interface ConnectionState {
 /** Secrets a check may use, passed in by the dispatcher that holds them. */
 export interface Secrets {
 	slackWebhookUrl?: string;
-	leadWebhookToken?: string;
-	checklyApiKey?: string;
 	n8nApiKey?: string;
 }
 
@@ -50,13 +47,111 @@ async function settingsOf(id: string): Promise<Record<string, string>> {
 	return ((await collection.doc(id).get()).data()?.settings as Record<string, string>) ?? {};
 }
 
-/** `Name | id | range` lines of the Google Sheets settings. */
-export function sheetSources(settings: Record<string, string>) {
-	return (settings.sources ?? '')
-		.split('\n')
-		.map((line) => line.split('|').map((s) => s.trim()))
-		.filter((parts) => parts.length === 3 && parts.every(Boolean))
-		.map(([name, spreadsheetId, range]) => ({ name, spreadsheetId, range }));
+/** One n8n workflow as the Automations page shows it. */
+export interface N8nWorkflow {
+	id: string;
+	name: string;
+	active: boolean;
+	updatedAt: string | null;
+	tags: string[];
+	/** Listed in the n8n connection's workflows, or named FLF/FFL. */
+	flf: boolean;
+	/** Latest run; null when none is among the instance's newest 250 runs (non-FLF workflows). */
+	lastRun: { at: string | null; status: string } | null;
+	errors24h: number;
+	lastErrorAt: string | null;
+	url: string;
+}
+
+/**
+ * Every workflow of the n8n instance with its latest run and its failures of the last 24 h.
+ * Read only (GET /workflows and /executions): never runs, edits or publishes anything.
+ * About four requests, plus one per FLF workflow for its own latest run (the instance's newest
+ * 250 runs are only a few hours, since Calendar → Events runs every minute).
+ */
+export async function n8nWorkflows(apiKey: string | undefined): Promise<N8nWorkflow[]> {
+	const settings = await settingsOf('n8n');
+	if (!apiKey || !settings.baseUrl)
+		throw new HttpsError(
+			'failed-precondition',
+			'Set up the n8n connection first (Connections → n8n workflows).'
+		);
+	const base = settings.baseUrl.replace(/\/+$/, '');
+	const headers = { 'X-N8N-API-KEY': apiKey, Accept: 'application/json' };
+	const page = async <T>(path: string, max: number): Promise<T[]> => {
+		const out: T[] = [];
+		let cursor = '';
+		while (out.length < max) {
+			const sep = path.includes('?') ? '&' : '?';
+			const res = await get(
+				`${base}/api/v1/${path}${sep}limit=${Math.min(250, max - out.length)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+				headers
+			);
+			if (!res.ok)
+				throw new HttpsError(
+					'unavailable',
+					`n8n returned an error (${res.status}). Test the n8n connection on Connections.`
+				);
+			const body = (await res.json()) as { data?: T[]; nextCursor?: string | null };
+			out.push(...(body.data ?? []));
+			if (!body.nextCursor) break;
+			cursor = body.nextCursor;
+		}
+		return out;
+	};
+	type Wf = {
+		id: string;
+		name: string;
+		active: boolean;
+		updatedAt?: string;
+		tags?: { name: string }[];
+	};
+	type Ex = { workflowId: string; status?: string; startedAt?: string };
+	const [workflows, recent, errors] = await Promise.all([
+		page<Wf>('workflows', 1000),
+		page<Ex>('executions', 250),
+		page<Ex>('executions?status=error', 250)
+	]);
+	const last = new Map<string, Ex>();
+	for (const e of recent) {
+		const prev = last.get(e.workflowId);
+		if (!prev || (prev.startedAt ?? '') < (e.startedAt ?? '')) last.set(e.workflowId, e);
+	}
+	const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+	const flfIds = new Set([
+		...pairs(settings.workflows).map((w) => w.id),
+		...N8N_AUTOMATIONS.map((a) => a.workflowId)
+	]);
+	const isFlf = (w: Wf) => flfIds.has(w.id) || /\b(FLF|FFL)\b/i.test(w.name);
+	// FLF workflows: their own latest run, whatever the rest of the instance did since.
+	await Promise.all(
+		workflows.filter(isFlf).map(async (w) => {
+			const [run] = await page<Ex>(`executions?workflowId=${encodeURIComponent(w.id)}`, 1);
+			if (run) last.set(w.id, run);
+		})
+	);
+	return workflows
+		.map((w) => {
+			const mine = errors.filter((e) => e.workflowId === w.id);
+			const run = last.get(w.id);
+			return {
+				id: w.id,
+				name: w.name,
+				active: w.active,
+				updatedAt: w.updatedAt ?? null,
+				tags: (w.tags ?? []).map((t) => t.name),
+				flf: isFlf(w),
+				lastRun: run ? { at: run.startedAt ?? null, status: run.status ?? 'unknown' } : null,
+				errors24h: mine.filter((e) => (e.startedAt ?? '') >= since).length,
+				lastErrorAt:
+					mine
+						.map((e) => e.startedAt ?? '')
+						.sort()
+						.at(-1) || null,
+				url: `${base}/workflow/${w.id}`
+			};
+		})
+		.sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
 }
 
 /** A range's values. Read-only scope: the Hub never writes to a sheet. */
@@ -102,32 +197,6 @@ async function check(
 	const settings = await settingsOf(id);
 	try {
 		switch (id) {
-			case 'website-forms': {
-				if (!secrets.leadWebhookToken)
-					return { status: 'not_configured', detail: 'LEAD_WEBHOOK_TOKEN is not set.' };
-				const last = (await collection.doc(id).get()).data()?.lastEventAt;
-				return {
-					status: 'ok',
-					detail: last
-						? 'Token set; applications are arriving.'
-						: 'Token set; no application received yet.'
-				};
-			}
-			case 'google-sheets': {
-				const sources = sheetSources(settings);
-				if (!sources.length) return { status: 'not_configured', detail: 'No sheet configured.' };
-				const counts = [];
-				for (const s of sources)
-					counts.push(`${s.name}: ${(await readSheet(s.spreadsheetId, s.range)).length} rows`);
-				return { status: 'ok', detail: counts.join(' · ') };
-			}
-			case 'bigquery': {
-				if (!settings.projectId || !settings.dataset)
-					return { status: 'not_configured', detail: 'Project id and dataset are required.' };
-				const bq = new BigQuery({ projectId: settings.projectId });
-				const [tables] = await bq.dataset(settings.dataset).getTables();
-				return { status: 'ok', detail: `${tables.length} tables in ${settings.dataset}.` };
-			}
 			case 'portal-sheet': {
 				// Lazy: portal imports this module.
 				const portal = await import('../portal/index.js');
@@ -139,64 +208,15 @@ async function check(
 					.map(([k, t]) => `${k} ${t.rows.length}`)
 					.join(' · ');
 				if (drift.length)
-					return { status: 'error', detail: `Columns changed. ${drift.join('; ')}` };
+					return { status: 'error', detail: `The sheet's columns changed: ${drift.join('; ')}` };
 				return { status: 'ok', detail: `All columns found. Rows: ${rows}` };
-			}
-			case 'uptime': {
-				const urls = (settings.urls ?? '')
-					.split('\n')
-					.map((u) => u.trim())
-					.filter(Boolean);
-				if (!urls.length) return { status: 'not_configured', detail: 'No address to watch.' };
-				const results = await Promise.all(
-					urls.map(async (u) => {
-						const started = Date.now();
-						try {
-							const res = await get(u);
-							return {
-								u,
-								ok: res.status < 400,
-								text: `${res.status} in ${Date.now() - started} ms`
-							};
-						} catch (e) {
-							return { u, ok: false, text: e instanceof Error ? e.message : 'no answer' };
-						}
-					})
-				);
-				const down = results.filter((r) => !r.ok);
-				const detail = results.map((r) => `${new URL(r.u).host}: ${r.text}`).join(' · ');
-				return { status: down.length ? 'error' : 'ok', detail };
-			}
-			case 'checkly': {
-				if (!secrets.checklyApiKey || !settings.accountId) {
-					return {
-						status: 'not_configured',
-						detail: 'CHECKLY_API_KEY and the account id are needed.'
-					};
-				}
-				const res = await get('https://api.checklyhq.com/v1/check-statuses', {
-					Authorization: `Bearer ${secrets.checklyApiKey}`,
-					'X-Checkly-Account': settings.accountId
-				});
-				if (!res.ok) return { status: 'error', detail: `Checkly answered ${res.status}.` };
-				const checks = (await res.json()) as {
-					name: string;
-					hasFailures: boolean;
-					hasErrors: boolean;
-				}[];
-				const failing = checks.filter((c) => c.hasFailures || c.hasErrors).map((c) => c.name);
-				if (!checks.length)
-					return { status: 'not_configured', detail: 'No checks in Checkly yet.' };
-				return failing.length
-					? { status: 'error', detail: `Failing: ${failing.join(', ')}` }
-					: { status: 'ok', detail: `${checks.length} checks passing.` };
 			}
 			case 'n8n': {
 				const list = pairs(settings.workflows);
 				if (!secrets.n8nApiKey || !settings.baseUrl || !list.length) {
 					return {
 						status: 'not_configured',
-						detail: 'N8N_API_KEY, the address and the workflows are needed.'
+						detail: 'Needs the n8n address, the workflows and an API key (developer).'
 					};
 				}
 				const base = settings.baseUrl.replace(/\/+$/, '');
@@ -230,7 +250,7 @@ async function check(
 				if (!CONNECTOR_URL) {
 					return {
 						status: 'not_configured',
-						detail: 'FLF_CONNECTOR_URL is not set (deploy, then set it).'
+						detail: 'Not set up yet: a developer needs to finish setup.'
 					};
 				}
 				const n = (
@@ -243,7 +263,7 @@ async function check(
 			}
 			case 'slack': {
 				if (!secrets.slackWebhookUrl)
-					return { status: 'not_configured', detail: 'SLACK_WEBHOOK_URL is not set.' };
+					return { status: 'not_configured', detail: 'Slack link not added yet (developer step).' };
 				// Only a test someone pressed posts; the hourly check would spam the channel.
 				if (!manual) return { status: 'ok', detail: 'Webhook URL set.' };
 				await slack(secrets.slackWebhookUrl, 'FLF Hub: connection test ✅');
@@ -279,28 +299,6 @@ export async function testAll(secrets: Secrets) {
 	}
 }
 
-/** Copy every configured sheet into `sheetSnapshot/{name}` for Reports. */
-export async function syncSheets(): Promise<number> {
-	const sources = sheetSources(await settingsOf('google-sheets'));
-	for (const s of sources) {
-		const rows = await readSheet(s.spreadsheetId, s.range);
-		// Firestore has no nested arrays: one map per row, keyed by column index.
-		await snapshots.doc(s.name).set({
-			name: s.name,
-			header: rows[0] ?? [],
-			rows: rows.slice(1, 1000).map((r) => Object.fromEntries(r.map((v, i) => [String(i), v]))),
-			syncedAt: serverTimestamp()
-		});
-	}
-	await collection.doc('google-sheets').set({ lastSyncAt: serverTimestamp() }, { merge: true });
-	return sources.length;
-}
-
-/** Record that an inbound event arrived (website application). */
-export async function touchEvent(id: string) {
-	await collection.doc(id).set({ lastEventAt: serverTimestamp() }, { merge: true });
-}
-
 export function actionsWith(secrets: () => Secrets) {
 	return {
 		'config.get': async () => ({ connectors: CONNECTORS, categories: CATEGORIES }),
@@ -315,8 +313,6 @@ export function actionsWith(secrets: () => Secrets) {
 			return { ok: true };
 		},
 
-		test: async (p: any) => test(str(p.id, 'id'), secrets()),
-
-		'sheets.sync': async () => ({ synced: await syncSheets() })
+		test: async (p: any) => test(str(p.id, 'id'), secrets())
 	};
 }

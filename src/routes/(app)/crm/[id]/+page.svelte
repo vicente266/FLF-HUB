@@ -6,6 +6,8 @@
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import Trash from '@lucide/svelte/icons/trash-2';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
+	import IdCard from '@lucide/svelte/icons/id-card';
+	import FellowProfile from '$lib/components/crm/FellowProfile.svelte';
 	import { db } from '$lib/firebase';
 	import { callAction, errorText } from '$lib/actions';
 	import {
@@ -17,8 +19,13 @@
 		formatDateTime,
 		toDate
 	} from '$lib/utils';
-	import { crmConfig, typeStyle } from '$lib/helpers/crmConfig.svelte';
-	import type { Activity, Contact, ContactDraft, Task, TeamUser } from '$lib/types/crm';
+	import {
+		contactSubtitle,
+		contactTitle,
+		crmConfig,
+		typeStyle
+	} from '$lib/helpers/crmConfig.svelte';
+	import type { Activity, Contact, ContactDraft, Strategy, Task, TeamUser } from '$lib/types/crm';
 	import Modal from '$lib/components/shared/Modal.svelte';
 	import FormError from '$lib/components/shared/FormError.svelte';
 	import ContactForm from '$lib/components/crm/ContactForm.svelte';
@@ -72,13 +79,25 @@
 	let tasks = $state<Task[]>([]);
 	let team = $state<TeamUser[]>([]);
 	let error = $state<string | null>(null);
+	let profileOpen = $state(false);
+
+	// A Partner's go-to-market strategy, for its name and link.
+	let strategy = $state<Strategy | null>(null);
+	// Derived, so the listener only restarts when the strategy itself changes, not on every edit.
+	let strategyId = $derived(contact?.strategyId ?? '');
+	$effect(() => {
+		const sid = strategyId;
+		strategy = null;
+		if (!sid) return;
+		return listenDoc<Strategy>(doc(db, 'strategy', sid), (s) => (strategy = s));
+	});
 
 	$effect(() => {
 		const cid = id;
 		const unsubs = [
 			listenDoc<Contact>(doc(db, 'contact', cid), (c) => {
 				contact = c;
-				if (c) setTitle(c.name, c.company || undefined);
+				if (c) setTitle(contactTitle(c), contactSubtitle(c) || undefined);
 			}),
 			listen<Activity>(
 				query(collection(db, 'contact', cid, 'activity'), orderBy('at', 'desc'), limit(100)),
@@ -138,7 +157,12 @@
 	}
 
 	async function remove() {
-		if (!confirm(`Delete ${contact?.name}, its timeline and its tasks? This cannot be undone.`))
+		if (
+			!contact ||
+			!confirm(
+				`Delete ${contactTitle(contact)}, its timeline and its tasks? This cannot be undone.`
+			)
+		)
 			return;
 		if (await act('crm:contact.delete', { id })) goto('/crm');
 	}
@@ -149,7 +173,8 @@
 		stage: 'Stage',
 		assigned: 'Owner',
 		automation: 'Automation',
-		updated: 'Updated'
+		updated: 'Updated',
+		meeting: 'Meeting'
 	};
 </script>
 
@@ -188,7 +213,18 @@
 									</span>
 								{/if}
 							</div>
-							<h2 class="mt-1 text-xl font-bold">{c.name}</h2>
+							<h2 class="mt-1 text-xl font-bold">{contactTitle(c)}</h2>
+							{#if c.type === 'partner'}
+								<div class="mt-0.5 flex flex-wrap gap-x-4 text-sm text-ink-soft">
+									{#if contactSubtitle(c)}<span>Main contact: {contactSubtitle(c)}</span>{/if}
+									{#if c.segment}<span>
+											{config.segments.find((x) => x.id === c.segment)?.label ?? c.segment}
+										</span>{/if}
+									{#if strategy}<a href="/gtm" class="text-primary-700">
+											Strategy: {strategy.name}
+										</a>{/if}
+								</div>
+							{/if}
 							<div class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-soft">
 								{#if c.email}<a href="mailto:{c.email}" class="hover:text-primary-700">
 										{c.email}
@@ -214,10 +250,20 @@
 							{/if}
 						</div>
 						<div class="flex shrink-0 gap-2">
+							{#if c.type === 'fellow'}<button
+									class="btn-ghost"
+									onclick={() => (profileOpen = true)}
+								>
+									<IdCard class="h-4 w-4" /> Fellow profile
+								</button>{/if}
 							{#if canWrite}<button class="btn-ghost" onclick={openEdit}>
 									<Pencil class="h-4 w-4" /> Edit
 								</button>{/if}
-							{#if canDelete}<button class="btn-ghost text-danger" onclick={remove} title="Delete">
+							{#if canDelete}<button
+									class="btn-ghost text-danger"
+									onclick={remove}
+									title="Delete contact"
+								>
 									<Trash class="h-4 w-4" />
 								</button>{/if}
 						</div>
@@ -241,8 +287,32 @@
 							</button>
 						{/each}
 					</div>
+					<div class="mt-3 flex items-center gap-3 text-sm">
+						<label for="next-step" class="text-xs font-semibold text-ink-soft">Next step</label>
+						<select
+							id="next-step"
+							class="rounded-md border border-line bg-white px-2 py-1 text-sm focus:ring-focus"
+							disabled={!canWrite}
+							value={c.nextStep ?? ''}
+							onchange={async (e) => {
+								const el = e.currentTarget;
+								// On failure, show the saved value again instead of the one that was refused.
+								if (!(await act('crm:contact.nextStep', { id, nextStep: el.value })))
+									el.value = c.nextStep ?? '';
+							}}
+						>
+							<option value="">None</option>
+							{#each config.nextSteps as s (s.id)}
+								<option value={s.id}>{s.label}</option>
+							{/each}
+						</select>
+						{#if c.nextStep && c.ownerName}
+							<span class="text-xs text-ink-soft">The owner gets a task when it changes.</span>
+						{/if}
+					</div>
 					<p class="mt-2 text-xs text-ink-soft">
-						In this stage since {formatDate(c.stageChangedAt)}.
+						In this stage since {formatDate(c.stageChangedAt)}. Changes here stick: the portal sheet
+						only overrides them when that person is changed in the sheet.
 					</p>
 				</section>
 
@@ -282,7 +352,7 @@
 								placeholder="Add a note: call summary, decision, next step…"
 								bind:value={note}></textarea>
 							<button class="btn-primary self-end" onclick={addNote} disabled={!note.trim()}>
-								Add
+								Add note
 							</button>
 						</div>
 					{/if}
@@ -336,7 +406,7 @@
 					<section class="card px-4 py-3">
 						<div class="flex items-center justify-between">
 							<span class="font-bold">Wellbeing (PERMA)</span>
-							<span class="text-[11px] text-ink-soft">restricted · not in Claude</span>
+							<span class="text-[11px] text-ink-soft">Restricted · not shared with Claude</span>
 						</div>
 						<p class="mt-1 text-xs text-ink-soft">
 							Latest of {perma.length}, {formatDate(perma[0].completedAt)}
@@ -410,7 +480,7 @@
 								</div>
 							</li>
 						{:else}
-							<li class="px-4 py-3 text-sm text-ink-soft">No tasks.</li>
+							<li class="px-4 py-3 text-sm text-ink-soft">No tasks for this contact yet.</li>
 						{/each}
 					</ul>
 					{#if canWrite}
@@ -419,7 +489,7 @@
 							<div class="flex gap-2">
 								<input class="input" type="date" bind:value={taskDue} />
 								<button class="btn-primary" onclick={addTask} disabled={!taskTitle.trim()}>
-									Add
+									Add task
 								</button>
 							</div>
 						</div>
@@ -441,3 +511,5 @@
 {:else}
 	<p class="text-sm text-ink-soft">Loading…</p>
 {/if}
+
+{#if contact}<FellowProfile bind:open={profileOpen} {contact} />{/if}

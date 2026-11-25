@@ -65,14 +65,15 @@ async function execute(
 			`Unknown action '${name}'. Reload the page: the Hub has probably been updated.`
 		);
 	}
-	if (!auth?.uid) throw new HttpsError('unauthenticated', 'You must be signed in.');
+	if (!auth?.uid) throw new HttpsError('unauthenticated', 'Your session has ended. Sign in again.');
 	if (action.adminOnly && roleOf(auth) !== 'admin') {
 		throw new HttpsError('permission-denied', action.denied ?? 'Only admins can do this.');
 	}
 	if (action.permission && !(await utils.hasPermission(auth, action.permission))) {
 		throw new HttpsError(
 			'permission-denied',
-			action.denied ?? 'You do not have permission to do this.'
+			action.denied ??
+				'You do not have permission to do this. Ask an admin to add you to a group that allows it.'
 		);
 	}
 
@@ -85,6 +86,11 @@ async function execute(
 	} catch (err) {
 		scoped.error(`failed in ${Date.now() - startedAt}ms`, err);
 		if (err instanceof HttpsError) throw err;
-		throw new HttpsError('internal', err instanceof Error ? err.message : 'Internal error.');
+		throw new HttpsError(
+			'internal',
+			err instanceof Error
+				? err.message
+				: 'Something went wrong on our side. Try again; if it keeps failing, check Health.'
+		);
 	}
 }

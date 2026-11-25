@@ -23,6 +23,18 @@ service cloud.firestore {
     match /task/{id} {
       allow read: if team();
     }
+    // Go-to-market strategies; edited through crm:strategy.*.
+    match /strategy/{id} {
+      allow read: if team();
+    }
+    // FLF facts and messaging (Knowledge); edited through core:knowledge.*.
+    match /knowledge/{id} {
+      allow read: if team();
+    }
+    // Meetings imported from the portal sheet's Events tab.
+    match /event/{id} {
+      allow read: if team();
+    }
     match /automation/{id} {
       allow read: if team();
     }
@@ -31,9 +43,6 @@ service cloud.firestore {
     }
     // Settings only; secrets live in Secret Manager.
     match /connection/{id} {
-      allow read: if team();
-    }
-    match /sheetSnapshot/{id} {
       allow read: if team();
     }
     match /{document=**} {

@@ -16,6 +16,18 @@ export function crmConfig() {
 	};
 }
 
+/**
+ * How a contact is titled: a Partner by its organisation (company), with the main contact below;
+ * everyone else by name, with the company below.
+ */
+export function contactTitle(c: { type: string; name: string; company?: string }) {
+	return c.type === 'partner' ? c.company || c.name : c.name;
+}
+export function contactSubtitle(c: { type: string; name: string; company?: string }) {
+	if (c.type !== 'partner') return c.company ?? '';
+	return c.company ? c.name : '';
+}
+
 export function stageLabel(c: CrmConfig | null, type: ContactType, stage: string): string {
 	return c?.pipelines[type]?.stages.find((s) => s.id === stage)?.label ?? stage;
 }

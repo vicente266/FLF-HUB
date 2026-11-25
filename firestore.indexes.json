@@ -189,6 +189,20 @@
 					"order": "DESCENDING"
 				}
 			]
+		},
+		{
+			"collectionGroup": "event",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "contactIds",
+					"arrayConfig": "CONTAINS"
+				},
+				{
+					"fieldPath": "date",
+					"order": "DESCENDING"
+				}
+			]
 		}
 	],
 	"fieldOverrides": []

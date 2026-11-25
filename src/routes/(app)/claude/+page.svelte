@@ -45,7 +45,7 @@
 	}
 
 	async function end(target: 'core:claude.disconnect' | 'core:claude.admin.revoke', id: string) {
-		if (!confirm('End this connection? Claude loses access at its next call.')) return;
+		if (!confirm('Disconnect this app? Claude loses access to the Hub straight away.')) return;
 		try {
 			await callAction(target, { id });
 			await load();
@@ -112,7 +112,8 @@
 					</div>
 				{:else}
 					<p class="text-xs text-ink-soft">
-						Not set yet: it exists after the first deploy (see Connections → Claude connector).
+						Not available yet. A developer needs to finish the setup (Connections → Claude
+						connector).
 					</p>
 				{/if}
 			</div>
@@ -157,7 +158,7 @@
 				</li>
 			{:else}
 				<li class="px-5 py-4 text-sm text-ink-soft">
-					No connections. Connect from claude.ai or Claude Code.
+					No connected apps yet. Follow the steps above to connect claude.ai or Claude Code.
 				</li>
 			{/each}
 		</ul>
@@ -180,7 +181,7 @@
 									class="text-xs font-semibold text-danger"
 									onclick={() => end('core:claude.admin.revoke', c.id)}
 								>
-									Revoke
+									Disconnect
 								</button>
 							</td>
 						</tr>

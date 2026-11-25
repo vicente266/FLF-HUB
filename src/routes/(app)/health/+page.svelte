@@ -28,7 +28,7 @@
 
 	const OVERALL: Record<Level, [string, string]> = {
 		ok: ['All systems working', 'bg-success/10 border-success/30'],
-		warning: ['Working, with connections still to set up', 'bg-warning/10 border-warning/30'],
+		warning: ['Working, some connections need setup', 'bg-warning/10 border-warning/30'],
 		error: ['Something is failing', 'bg-danger/10 border-danger/30'],
 		off: ['Nothing switched on', 'bg-canvas border-line']
 	};

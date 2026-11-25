@@ -14,6 +14,9 @@ export const PERMISSIONS = [
 	'connections.any.read',
 	'connections.any.write',
 	'health.any.read',
+	// The Knowledge list (FLF facts and messaging Claude reads before writing).
+	'knowledge.any.read',
+	'knowledge.any.write',
 	// Health data (PERMA wellbeing). Never served to Claude.
 	'wellbeing.any.read',
 	// Fellows' income and financial reports.

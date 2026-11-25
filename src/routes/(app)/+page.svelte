@@ -6,6 +6,7 @@
 	import { callAction } from '$lib/actions';
 	import { me } from '$lib/stores';
 	import { hasPermission, listen, setTitle, formatDate, toDate } from '$lib/utils';
+	import { contactTitle } from '$lib/helpers/crmConfig.svelte';
 	import type { Contact, Task } from '$lib/types/crm';
 	import type { Health } from '$lib/types/connections';
 	import StatusDot from '$lib/components/shared/StatusDot.svelte';
@@ -57,9 +58,9 @@
 
 	const HEALTH_TEXT = {
 		ok: 'All systems working',
-		warning: 'Some connections need setup',
+		warning: 'Working, some connections need setup',
 		error: 'Something is failing',
-		off: 'Off'
+		off: 'Nothing switched on'
 	};
 </script>
 
@@ -73,7 +74,7 @@
 
 	{#if summary}
 		<div class="grid grid-cols-4 gap-3">
-			{#each [['New contacts (30 days)', summary.kpis.newLast30], ['Need attention', summary.kpis.needsAttention], ['Open tasks', summary.kpis.openTasks], ['Overdue tasks', summary.kpis.overdueTasks]] as [label, value] (label)}
+			{#each [['New contacts (30 days)', summary.kpis.newLast30], ['Needs attention', summary.kpis.needsAttention], ['Open tasks', summary.kpis.openTasks], ['Overdue tasks', summary.kpis.overdueTasks]] as [label, value] (label)}
 				<div class="card px-4 py-3">
 					<div class="text-xs font-semibold text-ink-soft">{label}</div>
 					<div class="mt-1 text-2xl font-bold">{value}</div>
@@ -91,7 +92,7 @@
 				</a>
 			</div>
 			{#if tasks.length === 0}
-				<p class="px-4 py-6 text-sm text-ink-soft">Nothing due. Nice.</p>
+				<p class="px-4 py-6 text-sm text-ink-soft">No open tasks. Nice.</p>
 			{:else}
 				<ul class="divide-y divide-line/40">
 					{#each tasks as t (t.id)}
@@ -131,7 +132,7 @@
 			<section class="card">
 				<div class="flex items-center gap-2 border-b border-line/60 px-4 py-3">
 					<TriangleAlert class="h-4 w-4 text-warning" />
-					<h3 class="font-bold">Need attention</h3>
+					<h3 class="font-bold">Needs attention</h3>
 				</div>
 				{#if attention.length === 0}
 					<p class="px-4 py-6 text-sm text-ink-soft">Every contact is moving.</p>
@@ -139,7 +140,9 @@
 					<ul class="divide-y divide-line/40">
 						{#each attention as c (c.id)}
 							<li class="px-4 py-2 text-sm">
-								<a href="/crm/{c.id}" class="font-medium hover:text-primary-700">{c.name}</a>
+								<a href="/crm/{c.id}" class="font-medium hover:text-primary-700">
+									{contactTitle(c)}
+								</a>
 								<div class="text-xs text-ink-soft">{c.ownerName ?? 'No owner'}</div>
 							</li>
 						{/each}

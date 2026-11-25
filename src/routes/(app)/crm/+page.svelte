@@ -6,17 +6,23 @@
 	import Columns3 from '@lucide/svelte/icons/columns-3';
 	import List from '@lucide/svelte/icons/list';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
+	import FellowProfile from '$lib/components/crm/FellowProfile.svelte';
 	import { db } from '$lib/firebase';
 	import { callAction, errorText } from '$lib/actions';
 	import { me } from '$lib/stores';
 	import { hasPermission, listen, setTitle, relative } from '$lib/utils';
-	import { crmConfig, stageLabel } from '$lib/helpers/crmConfig.svelte';
+	import {
+		contactSubtitle,
+		contactTitle,
+		crmConfig,
+		stageLabel
+	} from '$lib/helpers/crmConfig.svelte';
 	import type { Contact, ContactDraft, ContactType } from '$lib/types/crm';
 	import Modal from '$lib/components/shared/Modal.svelte';
 	import FormError from '$lib/components/shared/FormError.svelte';
 	import ContactForm from '$lib/components/crm/ContactForm.svelte';
 
-	setTitle('CRM', 'Fellows, Gurus and Investors');
+	setTitle('CRM', 'Fellows, Gurus, Investors and Partners');
 
 	const cfg = crmConfig();
 	const canWrite = hasPermission('crm.any.write');
@@ -94,9 +100,18 @@
 		linkedin: '',
 		source: 'manual',
 		tags: '',
-		notes: ''
+		notes: '',
+		segment: '',
+		strategyId: ''
 	});
 	let draft = $state<ContactDraft>(blank());
+	// The Fellow whose profile pop-up is open (null = closed).
+	let profileOf = $state<Contact | null>(null);
+	let profileOpen = $state(false);
+	function openProfile(c: Contact) {
+		profileOf = c;
+		profileOpen = true;
+	}
 
 	function openNew() {
 		draft = blank();
@@ -176,7 +191,9 @@
 					</button>
 				</div>
 				{#if canWrite}
-					<button class="btn-primary" onclick={openNew}><Plus class="h-4 w-4" /> New</button>
+					<button class="btn-primary" onclick={openNew}>
+						<Plus class="h-4 w-4" /> New contact
+					</button>
 				{/if}
 			</div>
 		</div>
@@ -210,12 +227,14 @@
 									class="block card px-3 py-2 hover:border-primary-300"
 								>
 									<div class="flex items-start justify-between gap-2">
-										<span class="text-sm font-semibold">{c.name}</span>
+										<span class="text-sm font-semibold">{contactTitle(c)}</span>
 										{#if c.needsAttention}<TriangleAlert
 												class="h-3.5 w-3.5 shrink-0 text-warning"
 											/>{/if}
 									</div>
-									{#if c.company}<div class="truncate text-xs text-ink-soft">{c.company}</div>{/if}
+									{#if contactSubtitle(c)}<div class="truncate text-xs text-ink-soft">
+											{contactSubtitle(c)}
+										</div>{/if}
 									<div class="mt-1.5 flex items-center justify-between text-[11px] text-ink-soft">
 										<span class="truncate">{c.ownerName ?? 'No owner'}</span>
 										<span class="shrink-0">{relative(c.lastActivityAt)}</span>
@@ -231,8 +250,12 @@
 				<table class="w-full text-sm">
 					<thead class="bg-canvas text-left text-xs text-ink-soft">
 						<tr>
-							<th class="px-4 py-2 font-semibold">Name</th>
-							<th class="px-4 py-2 font-semibold">Company</th>
+							<th class="px-4 py-2 font-semibold">
+								{type === 'partner' ? 'Organisation' : 'Name'}
+							</th>
+							<th class="px-4 py-2 font-semibold">
+								{type === 'partner' ? 'Main contact' : 'Company'}
+							</th>
 							<th class="px-4 py-2 font-semibold">Stage</th>
 							<th class="px-4 py-2 font-semibold">Owner</th>
 							<th class="px-4 py-2 font-semibold">Source</th>
@@ -243,10 +266,20 @@
 						{#each filtered as c (c.id)}
 							<tr class="hover:bg-canvas">
 								<td class="px-4 py-2">
-									<a href="/crm/{c.id}" class="font-semibold hover:text-primary-700">{c.name}</a>
-									<div class="text-xs text-ink-soft">{c.email}</div>
+									<a href="/crm/{c.id}" class="font-semibold hover:text-primary-700">
+										{contactTitle(c)}
+									</a>
+									<div class="text-xs text-ink-soft">
+										{c.email}
+										{#if c.type === 'fellow'}<button
+												class="ml-1 text-primary-700 hover:underline"
+												onclick={() => openProfile(c)}
+											>
+												Profile
+											</button>{/if}
+									</div>
 								</td>
-								<td class="px-4 py-2">{c.company || '—'}</td>
+								<td class="px-4 py-2">{contactSubtitle(c) || '—'}</td>
 								<td class="px-4 py-2">{stageLabel(config, c.type, c.stage)}</td>
 								<td class="px-4 py-2">{c.ownerName ?? '—'}</td>
 								<td class="px-4 py-2 capitalize">{c.source}</td>
@@ -259,7 +292,9 @@
 							</tr>
 						{:else}
 							<tr>
-								<td colspan="6" class="px-4 py-8 text-center text-ink-soft">No contacts match.</td>
+								<td colspan="6" class="px-4 py-8 text-center text-ink-soft">
+									No contacts match your search or filters.
+								</td>
 							</tr>
 						{/each}
 					</tbody>
@@ -275,11 +310,17 @@
 		</div>
 		{#snippet footer()}
 			<button class="btn-ghost" onclick={() => (creating = false)}>Cancel</button>
-			<button class="btn-primary" onclick={create} disabled={saving || !draft.name.trim()}>
-				Create
+			<button
+				class="btn-primary"
+				onclick={create}
+				disabled={saving || !(draft.type === 'partner' ? draft.company.trim() : draft.name.trim())}
+			>
+				Create contact
 			</button>
 		{/snippet}
 	</Modal>
 {:else}
 	<p class="text-sm text-ink-soft">Loading…</p>
 {/if}
+
+{#if profileOf}<FellowProfile bind:open={profileOpen} contact={profileOf} />{/if}

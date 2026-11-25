@@ -37,7 +37,7 @@ export interface AutomationDef {
 	id: string;
 	name: string;
 	description: string;
-	trigger: 'contact.created' | 'contact.stage' | 'schedule';
+	trigger: 'contact.stage' | 'contact.nextStep' | 'meeting' | 'schedule';
 	schedule?: string;
 	uses: string[];
 	defaultEnabled: boolean;

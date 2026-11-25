@@ -8,6 +8,9 @@
 /** The sheet's id, unless the Connections card overrides it. */
 export const DEFAULT_SPREADSHEET_ID = '1n0vJ2dzxS4Y4tmrCCe5X8RAe_qa4gLlEYNBVl8tnF5Y';
 
+/** Participant columns of the Events tab (Participant1 … Participant19). */
+export const EVENT_PARTICIPANTS = 19;
+
 /**
  * The tabs the import reads and the columns it needs from each. A header missing from the sheet
  * is schema drift: the Health check reports it and the import refuses that tab rather than
@@ -40,6 +43,9 @@ export const TABS = {
 			'Archetype',
 			'Funnel Stage',
 			'Last Interaction',
+			'Show in portal',
+			'Contract URL',
+			'Reasons Why',
 			'Starting Income',
 			'Current Income',
 			'Growth'
@@ -62,6 +68,21 @@ export const TABS = {
 			'Loneliness',
 			'Happiness',
 			'Overall'
+		]
+	},
+	/**
+	 * Meetings, written by the n8n workflow "Calendar → Events database" when a calendar event with
+	 * a CRM contact starts. Participants are CRM names; ALL PARTICIPANTS is a formula and not read.
+	 */
+	events: {
+		name: 'Events',
+		columns: [
+			'Show in portal',
+			'Title',
+			'Type',
+			'Date',
+			'Description',
+			...Array.from({ length: EVENT_PARTICIPANTS }, (_, i) => `Participant${i + 1}`)
 		]
 	},
 	wealth: {

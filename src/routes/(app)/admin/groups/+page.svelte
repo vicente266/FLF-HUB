@@ -9,7 +9,7 @@
 	import Modal from '$lib/components/shared/Modal.svelte';
 	import FormError from '$lib/components/shared/FormError.svelte';
 
-	setTitle('Groups', 'Bundles of permissions; users get the union of their groups');
+	setTitle('Groups', 'Sets of permissions. A user can do everything any of their groups allows.');
 
 	let groups = $state<Group[]>([]);
 	let permissions = $state<string[]>([]);
@@ -57,7 +57,11 @@
 	}
 
 	async function remove() {
-		if (!draft.id || !confirm(`Delete the group ${draft.name}?`)) return;
+		if (
+			!draft.id ||
+			!confirm(`Delete the group ${draft.name}? Its members lose the permissions it gives.`)
+		)
+			return;
 		try {
 			await callAction('core:group.remove', { id: draft.id });
 			editing = false;

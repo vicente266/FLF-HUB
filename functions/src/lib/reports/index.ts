@@ -1,4 +1,3 @@
-import { db } from '../../firestore';
 import * as crm from '../crm/index';
 import { CONTACT_TYPES, PIPELINES, SOURCES } from '../crm/config';
 import { Timestamp } from '../utils';
@@ -57,13 +56,5 @@ export async function summary() {
 }
 
 export const actions = {
-	summary: async () => summary(),
-	'sheets.list': async () => {
-		const snap = await db.collection('sheetSnapshot').get();
-		return snap.docs.map((d) => ({
-			id: d.id,
-			...d.data(),
-			syncedAt: d.data().syncedAt?.toMillis()
-		}));
-	}
+	summary: async () => summary()
 };

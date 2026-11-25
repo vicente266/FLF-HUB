@@ -3,8 +3,16 @@ import { HttpsError } from 'firebase-functions/v2/https';
 import { db } from '../../firestore';
 import { createLogger, serverTimestamp, Timestamp } from '../utils';
 import * as crm from '../crm/index';
+import { nextStepFromSheet, nextStepOf, stageOf } from '../crm/config';
 import { readSheet, collection as connectionCollection } from '../connections/index';
-import { DEFAULT_SPREADSHEET_ID, MAX_ROWS, STAGE_MAP, TABS, type TabKey } from './config';
+import {
+	DEFAULT_SPREADSHEET_ID,
+	EVENT_PARTICIPANTS,
+	MAX_ROWS,
+	STAGE_MAP,
+	TABS,
+	type TabKey
+} from './config';
 
 /**
  * Read-only import of the FLF Portal sheet into the Hub (docs/portal-import.md). The sheet stays
@@ -16,20 +24,35 @@ import { DEFAULT_SPREADSHEET_ID, MAX_ROWS, STAGE_MAP, TABS, type TabKey } from '
 const logger = createLogger('portal');
 export const wellbeing = db.collection('wellbeing');
 export const finance = db.collection('fellowFinance');
+/** Meetings from the sheet's Events tab (filled by n8n's "Calendar → Events database"). */
+export const events = db.collection('event');
 
 /** One tab, as header → value objects, and the headers it is missing. */
 export interface Tab {
 	rows: Record<string, string>[];
 	missing: string[];
+	/** More rows than MAX_ROWS: the tail was not read, so nothing may be removed for being absent. */
+	truncated?: boolean;
 }
 
 const norm = (s: unknown) => String(s ?? '').trim();
 const lower = (s: unknown) => norm(s).toLowerCase();
 const hash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 24);
 
-/** The Hub id of a person from the sheet: by email, or by name when there is none. */
+/**
+ * A cell's addresses, lowercased. The CRM tab sometimes holds two in one cell ("a@x.com, b@y.com"):
+ * the first is the person's email and identity, the others are kept as other emails.
+ */
+export function emailsOf(cell: string): string[] {
+	return lower(cell)
+		.split(/[\s,;]+/)
+		.filter((e) => e.includes('@'));
+}
+const primaryEmail = (cell: string) => emailsOf(cell)[0] ?? '';
+
+/** The Hub id of a person from the sheet: by (first) email, or by name when there is none. */
 export function contactIdOf(email: string, name: string): string {
-	const key = lower(email) || `name:${lower(name)}`;
+	const key = primaryEmail(email) || `name:${lower(name)}`;
 	return `portal-${hash(key)}`;
 }
 
@@ -38,13 +61,14 @@ export function toTab(values: string[][], columns: readonly string[]): Tab {
 	const header = (values[0] ?? []).map(norm);
 	const missing = columns.filter((c) => !header.includes(c));
 	const index = new Map(columns.map((c) => [c, header.indexOf(c)]));
+	const truncated = values.length - 1 > MAX_ROWS;
 	const rows = values
 		.slice(1, MAX_ROWS + 1)
 		.map((r) =>
 			Object.fromEntries(columns.map((c) => [c, index.get(c)! >= 0 ? norm(r[index.get(c)!]) : '']))
 		)
 		.filter((r) => Object.values(r).some(Boolean));
-	return { rows, missing };
+	return { rows, missing, truncated };
 }
 
 /** `dd/mm/yyyy`, `yyyy-mm-dd` or a sheet date as a Date, else null. */
@@ -89,8 +113,24 @@ export interface Plan {
 	tasks: { id: string; data: Record<string, unknown> }[];
 	wellbeing: { id: string; data: Record<string, unknown> }[];
 	finance: { id: string; data: Record<string, unknown> }[];
+	/** Meetings; each also lands on its participants' timelines. */
+	events: { id: string; data: CalendarEvent }[];
 	skipped: string[];
+	/** Tabs read only in part (over MAX_ROWS): nothing is removed for being absent from them. */
+	truncated: TabKey[];
 	drift: Record<string, string[]>;
+}
+
+/** One meeting from the Events tab. */
+export interface CalendarEvent {
+	title: string;
+	type: string;
+	date: Date | null;
+	description: string;
+	showInPortal: boolean;
+	participants: { name: string; contactId: string | null }[];
+	/** Contacts among the participants, for "this contact's meetings". */
+	contactIds: string[];
 }
 
 /**
@@ -98,9 +138,20 @@ export interface Plan {
  * tests exercise. Precedence for a person: CRM tab (stage) > Profiles (a Fellow) > Applications.
  */
 export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: string }[]): Plan {
-	const p: Plan = { contacts: [], tasks: [], wellbeing: [], finance: [], skipped: [], drift: {} };
-	for (const [k, t] of Object.entries(tabs))
+	const p: Plan = {
+		contacts: [],
+		tasks: [],
+		wellbeing: [],
+		finance: [],
+		events: [],
+		skipped: [],
+		truncated: [],
+		drift: {}
+	};
+	for (const [k, t] of Object.entries(tabs)) {
 		if (t.missing.length) p.drift[TABS[k as TabKey].name] = t.missing;
+		if (t.truncated) p.truncated.push(k as TabKey);
+	}
 
 	const byId = new Map<string, { data: Record<string, unknown>; from: string }>();
 	const put = (id: string, data: Record<string, unknown>, from: string) => {
@@ -109,7 +160,9 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 		if (!prev) byId.set(id, { data, from });
 		else {
 			for (const [k, v] of Object.entries(data)) {
-				if (prev.data[k] === undefined || prev.data[k] === '' || prev.data[k] === null)
+				if (Array.isArray(prev.data[k]) && Array.isArray(v))
+					prev.data[k] = [...new Set([...(prev.data[k] as unknown[]), ...v])];
+				else if (prev.data[k] === undefined || prev.data[k] === '' || prev.data[k] === null)
 					prev.data[k] = v;
 			}
 			prev.from = `${prev.from}+${from}`;
@@ -133,7 +186,8 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 				contactIdOf(r['Email'], r['Name']),
 				{
 					name: r['Name'] || r['Email'],
-					email: lower(r['Email']),
+					email: primaryEmail(r['Email']),
+					otherEmails: emailsOf(r['Email']).slice(1),
 					company: r['Company Name'],
 					stage,
 					nextStep: r['Status'],
@@ -155,7 +209,8 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 				contactIdOf(r['Email'], r['Name']),
 				{
 					name: r['Name'] || r['Email'],
-					email: lower(r['Email']),
+					email: primaryEmail(r['Email']),
+					otherEmails: emailsOf(r['Email']).slice(1),
 					company: r['Company Name'],
 					linkedin: r['LinkedIn'],
 					stage: 'fellow',
@@ -167,6 +222,10 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 					sherpaName: r['Sherpa Name'],
 					archetype: r['Archetype'],
 					funnelStage: r['Funnel Stage'],
+					onPortal: r['Show in portal'] ? yes(r['Show in portal']) : null,
+					contractUrl: r['Contract URL'],
+					reasonsWhy: r['Reasons Why'],
+					lastInteraction: parseDate(r['Last Interaction']),
 					...(owner ? { ownerUid: owner.uid, ownerName: owner.name } : {})
 				},
 				'profiles'
@@ -189,11 +248,17 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 	if (!tabs.applications.missing.length) {
 		for (const r of tabs.applications.rows) {
 			if (!r['Email'] && !r['Name']) continue;
+			// Test submissions of the portal's form are not applicants.
+			if (/@example\.(com|org)$/.test(primaryEmail(r['Email'])) || /^test\b/i.test(r['Company'])) {
+				p.skipped.push(`Applications: test row "${r['Name']}" (${r['Company'] || 'no company'})`);
+				continue;
+			}
 			put(
 				contactIdOf(r['Email'], r['Name']),
 				{
 					name: r['Name'] || r['Email'],
-					email: lower(r['Email']),
+					email: primaryEmail(r['Email']),
+					otherEmails: emailsOf(r['Email']).slice(1),
 					company: r['Company'],
 					linkedin: r['LinkedIn'],
 					stage: 'application',
@@ -212,6 +277,46 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 	}
 
 	for (const [id, { data, from }] of byId) p.contacts.push({ id, data, from });
+
+	if (!tabs.events.missing.length) {
+		// Participants are CRM names (n8n writes them): match them to the contacts above by name.
+		const byName = new Map<string, string>();
+		for (const c of p.contacts) {
+			const n = lower(c.data.name);
+			if (n && !byName.has(n)) byName.set(n, c.id);
+		}
+		const seen = new Set<string>();
+		for (const r of tabs.events.rows) {
+			if (!r['Title']) continue;
+			// n8n's own dedupe key: lowercased title + day. The day is normalised, so a change in how
+			// the sheet formats dates doesn't turn every meeting into a new one.
+			const date = parseDate(r['Date']);
+			if (!date) p.skipped.push(`Events: unreadable date "${r['Date']}" for "${r['Title']}"`);
+			const day = date ? date.toISOString().slice(0, 10) : `raw:${lower(r['Date'])}`;
+			const id = `event-${hash(`${lower(r['Title'])}|${day}`)}`;
+			if (seen.has(id)) continue;
+			seen.add(id);
+			const participants = Array.from({ length: EVENT_PARTICIPANTS }, (_, i) =>
+				norm(r[`Participant${i + 1}`])
+			)
+				.filter(Boolean)
+				.map((name) => ({ name, contactId: byName.get(lower(name)) ?? null }));
+			p.events.push({
+				id,
+				data: {
+					title: r['Title'],
+					type: r['Type'].replace(/^'/, ''),
+					date,
+					description: r['Description'],
+					showInPortal: yes(r['Show in portal']),
+					participants,
+					contactIds: [
+						...new Set(participants.map((x) => x.contactId).filter((x): x is string => !!x))
+					]
+				}
+			});
+		}
+	}
 
 	if (!tabs.tasks.missing.length) {
 		for (const r of tabs.tasks.rows) {
@@ -236,9 +341,25 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 		}
 	}
 
+	// Health and money only for people who are contacts: test and demo submissions, and the team's
+	// own check-ins, must not reach the Hub or the cohort averages.
+	// Matched on any of a contact's addresses (a Fellow may fill a form with their other email),
+	// and keyed to the contact itself.
+	const byEmail = new Map<string, string>();
+	for (const c of p.contacts)
+		for (const e of [c.data.email, ...((c.data.otherEmails as string[] | undefined) ?? [])])
+			if (e && !byEmail.has(String(e))) byEmail.set(String(e), c.id);
+	const contactOf = (cell: string) => byEmail.get(primaryEmail(cell));
+	const notContacts = { perma: 0, wealth: 0 };
+
 	if (!tabs.perma.missing.length) {
 		for (const r of tabs.perma.rows) {
 			if (!r['Founder Email']) continue;
+			const contactId = contactOf(r['Founder Email']);
+			if (!contactId) {
+				notContacts.perma++;
+				continue;
+			}
 			const scores = Object.fromEntries(
 				['P', 'E', 'R', 'M', 'A', 'N', 'H', 'Loneliness', 'Happiness', 'Overall'].map((k) => [
 					k,
@@ -248,7 +369,7 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 			p.wellbeing.push({
 				id: `perma-${hash(r['Submission ID'] || `${r['Founder Email']}|${r['Completion Date']}`)}`,
 				data: {
-					contactId: contactIdOf(r['Founder Email'], ''),
+					contactId,
 					completedAt: parseDate(r['Completion Date']),
 					scores
 				}
@@ -264,7 +385,11 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 		>();
 		for (const r of tabs.wealth.rows) {
 			if (!r['Founder Email']) continue;
-			const id = contactIdOf(r['Founder Email'], '');
+			const id = contactOf(r['Founder Email']);
+			if (!id) {
+				notContacts.wealth++;
+				continue;
+			}
 			const report = `${r['Report Type'] || 'Report'} (${r['Completion Date'] || 'no date'})`;
 			const t = totals.get(id) ?? {};
 			const row = ((t[report] ??= {})[r['Row Type'] || 'Other'] ??= { gross: 0, net: 0, value: 0 });
@@ -279,6 +404,12 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 			else p.finance.push({ id, data: { contactId: id, reports } });
 		}
 	}
+	if (notContacts.perma)
+		p.skipped.push(
+			`Perma: ${notContacts.perma} rows of people who are not contacts (test, demo, team)`
+		);
+	if (notContacts.wealth)
+		p.skipped.push(`Wealth: ${notContacts.wealth} rows of people who are not contacts`);
 	return p;
 }
 
@@ -293,6 +424,7 @@ export function summary(p: Plan) {
 		tasks: p.tasks.length,
 		wellbeing: p.wellbeing.length,
 		finance: p.finance.length,
+		events: p.events.length,
 		skipped: p.skipped,
 		drift: p.drift
 	};
@@ -311,15 +443,28 @@ export async function dryRun() {
 
 /**
  * Read the sheet and upsert everything into the Hub. Contacts keep the Hub's own fields
- * (timeline, tasks, notes, owner once set in the Hub); a stage that changed in the sheet is
- * recorded on the timeline as "via portal sync". Automations ignore sync writes (crmContactWritten
- * checks `portal.syncedAt`).
+ * (timeline, tasks, notes, owner once set in the Hub).
+ *
+ * Stage and next step: whichever changed last wins. The sheet's value is applied only when it
+ * differs from what the sheet said at the previous sync (`portal.sheetStage`/`sheetNextStep`),
+ * so a move made in the Hub sticks until someone changes that person in the sheet. Automations
+ * ignore sync writes (crmContactWritten checks `portal.syncedAt`); new recent meetings ask the
+ * owner whether to move the contact (automation `meeting-next-stage`).
  */
 export async function run() {
-	const p = plan(await readAll(), await teamList());
+	const tabs = await readAll();
+	const p = plan(tabs, await teamList());
 	const now = Timestamp.now();
 	let created = 0;
 	let moved = 0;
+	// The events already in the Hub (one read each): only new ones suggest a stage move, and the
+	// ones gone from the sheet are removed below.
+	const known = new Map(
+		(await events.select('contactIds').get()).docs.map((d) => [
+			d.id,
+			(d.data().contactIds ?? []) as string[]
+		])
+	);
 	for (const c of p.contacts) {
 		const ref = crm.contacts.doc(c.id);
 		const doc = await ref.get();
@@ -335,7 +480,14 @@ export async function run() {
 			sherpaName: d.sherpaName ?? null,
 			archetype: d.archetype ?? null,
 			funnelStage: d.funnelStage ?? null,
+			otherEmails: (d.otherEmails as string[] | undefined)?.length ? d.otherEmails : null,
+			onPortal: d.onPortal ?? null,
+			contractUrl: d.contractUrl || null,
+			reasonsWhy: d.reasonsWhy || null,
+			lastInteraction: d.lastInteraction ?? null,
 			nextStep: d.nextStep || null,
+			sheetStage: stage,
+			sheetNextStep: nextStepFromSheet(String(d.nextStep ?? '')),
 			scoring: d.scoring || null,
 			reasonLost: d.reasonLost || null,
 			sheetNotes: d.sheetNotes || null,
@@ -352,6 +504,7 @@ export async function run() {
 				linkedin: d.linkedin ?? '',
 				source: 'portal',
 				stage,
+				nextStep: portal.sheetNextStep,
 				open: !final,
 				ownerUid: d.ownerUid ?? null,
 				ownerName: d.ownerName ?? null,
@@ -385,11 +538,13 @@ export async function run() {
 		};
 		if (!cur.ownerUid && d.ownerUid)
 			Object.assign(update, { ownerUid: d.ownerUid, ownerName: d.ownerName });
-		if (cur.stage !== stage) {
+		// Only when the sheet changed since the last sync: otherwise a Hub move stands.
+		if (cur.stage !== stage && cur.portal?.sheetStage !== stage) {
+			const label = (s: string) => stageOf(cur.type, s)?.label ?? s;
 			Object.assign(update, { stage, open: !final, stageChangedAt: now });
 			await ref.collection('activity').add({
 				kind: 'stage',
-				text: `${cur.stage} → ${stage} (from the portal sheet)`,
+				text: `${label(cur.stage)} → ${label(stage)} (from the portal sheet)`,
 				by: 'Portal sync',
 				via: 'portal',
 				from: cur.stage,
@@ -397,6 +552,17 @@ export async function run() {
 				at: now
 			});
 			moved++;
+		}
+		const sheetNext = portal.sheetNextStep;
+		if ((cur.nextStep ?? '') !== sheetNext && cur.portal?.sheetNextStep !== sheetNext) {
+			update.nextStep = sheetNext;
+			await ref.collection('activity').add({
+				kind: 'updated',
+				text: `Next step: ${nextStepOf(sheetNext)?.label ?? 'none'} (from the portal sheet)`,
+				by: 'Portal sync',
+				via: 'portal',
+				at: now
+			});
 		}
 		await ref.update(update);
 	}
@@ -421,13 +587,109 @@ export async function run() {
 		b.set(finance.doc(f.id), { ...f.data, syncedAt: now }, { merge: true });
 		if (++n >= 400) await flush();
 	}
+	// Health and money no longer in the sheet (or no longer a contact's) are removed, so they leave
+	// the cohort averages too. Only after a whole, unchanged read of their tabs. One read per doc.
+	const whole = (k: TabKey) => !tabs[k].missing.length && !tabs[k].truncated;
+	let removedHealth = 0;
+	if (whole('perma')) {
+		const keep = new Set(p.wellbeing.map((w) => w.id));
+		for (const d of (await wellbeing.select().get()).docs)
+			if (!keep.has(d.id)) {
+				b.delete(d.ref);
+				removedHealth++;
+				if (++n >= 400) await flush();
+			}
+	}
+	if (whole('profiles') && whole('wealth')) {
+		const keep = new Set(p.finance.map((f) => f.id));
+		for (const d of (await finance.select().get()).docs)
+			if (!keep.has(d.id)) {
+				b.delete(d.ref);
+				removedHealth++;
+				if (++n >= 400) await flush();
+			}
+	}
+	// Meetings, and one timeline entry per contact per meeting (doc id = event id, so a second
+	// run rewrites it instead of adding another).
+	const newMeetings: { contactId: string; title: string; date: Date | null }[] = [];
+	for (const e of p.events) {
+		if (!known.has(e.id))
+			for (const cid of e.data.contactIds)
+				newMeetings.push({ contactId: cid, title: e.data.title, date: e.data.date });
+		b.set(events.doc(e.id), { ...e.data, syncedAt: now });
+		if (++n >= 400) await flush();
+		const at = e.data.date ? Timestamp.fromDate(e.data.date) : now;
+		for (const cid of e.data.contactIds) {
+			b.set(crm.contacts.doc(cid).collection('activity').doc(e.id), {
+				kind: 'meeting',
+				text: e.data.type ? `${e.data.type}: ${e.data.title}` : e.data.title,
+				by: 'Calendar',
+				via: 'portal',
+				at
+			});
+			if (++n >= 400) await flush();
+		}
+	}
+	// Events deleted or renamed in the sheet: remove them and their timeline entries. Only when the
+	// Events tab was read whole (no missing columns), never on a partial read.
+	let removedEvents = 0;
+	if (!p.drift[TABS.events.name] && !p.truncated.includes('events')) {
+		const current = new Set(p.events.map((e) => e.id));
+		for (const [id, contactIds] of known) {
+			if (current.has(id)) continue;
+			b.delete(events.doc(id));
+			if (++n >= 400) await flush();
+			for (const cid of contactIds) {
+				b.delete(crm.contacts.doc(cid).collection('activity').doc(id));
+				if (++n >= 400) await flush();
+			}
+			removedEvents++;
+		}
+	}
 	await flush();
 
-	const result = { ...summary(p), created, moved };
+	// A meeting is activity: move each contact's lastActivityAt forward to its latest meeting, so
+	// someone met yesterday is not flagged stale. One read per contact with meetings.
+	const latest = new Map<string, Date>();
+	for (const e of p.events) {
+		if (!e.data.date || e.data.date.getTime() > Date.now()) continue;
+		for (const cid of e.data.contactIds) {
+			const prev = latest.get(cid);
+			if (!prev || prev < e.data.date) latest.set(cid, e.data.date);
+		}
+	}
+	for (const [cid, date] of latest) {
+		const ref = crm.contacts.doc(cid);
+		const cur = (await ref.get()).data();
+		if (!cur) continue;
+		const last = cur.lastActivityAt?.toMillis?.() ?? 0;
+		if (last >= date.getTime()) continue;
+		b.update(ref, { lastActivityAt: Timestamp.fromDate(date) });
+		if (++n >= 400) await flush();
+	}
+	await flush();
+
+	const { meetingSuggestions } = await import('../automations/index.js');
+	await meetingSuggestions(newMeetings);
+
+	const result = {
+		...summary(p),
+		created,
+		moved,
+		newMeetings: newMeetings.length,
+		removedEvents,
+		removedHealthOrFinance: removedHealth
+	};
 	await connectionCollection.doc('portal-sheet').set(
 		{
 			lastSyncAt: serverTimestamp(),
-			lastSync: { created, moved, contacts: p.contacts.length, tasks: p.tasks.length }
+			lastSync: {
+				created,
+				moved,
+				contacts: p.contacts.length,
+				tasks: p.tasks.length,
+				events: p.events.length
+			}
 		},
 		{ merge: true }
 	);

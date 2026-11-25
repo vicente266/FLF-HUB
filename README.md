@@ -6,16 +6,19 @@ same architecture as the EBS Hub (`barschool/aihub`).
 
 ## Modules
 
-| Module      | Route                           | What it does                                                             |
-| ----------- | ------------------------------- | ------------------------------------------------------------------------ |
-| Home        | `/`                             | My tasks, contacts that need attention, KPIs, system health              |
-| CRM         | `/crm`, `/crm/[id]`             | Pipelines per contact type (board + list), timeline, notes, owner, tasks |
-| Tasks       | `/tasks`                        | Open follow-ups: overdue, today, later                                   |
-| Reports     | `/reports`                      | Funnel per pipeline, sources, KPIs; Google Sheets as extra tabs          |
-| Automations | `/automations`                  | On/off switches, last run, recent runs                                   |
-| Connections | `/connections`                  | Every integration: status, what it feeds, settings, setup steps, Test    |
-| Health      | `/health`                       | Connections + automations + data freshness in one view, checked hourly   |
-| Admin       | `/admin/users`, `/admin/groups` | Roles, Sherpa flag, groups of permissions                                |
+| Module       | Route                           | What it does                                                                                   |
+| ------------ | ------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Home         | `/`                             | My tasks, contacts that need attention, KPIs, system health                                    |
+| CRM          | `/crm`, `/crm/[id]`             | Fellows, Gurus, Investors and Partners: board + list, timeline, notes, owner, next step, tasks |
+| Tasks        | `/tasks`                        | Open follow-ups: overdue, today, later                                                         |
+| Reports      | `/reports`                      | Funnel per pipeline, sources, KPIs                                                             |
+| Go-to-market | `/gtm`                          | Strategies and the Partners (funds, universities…) we reach out to (docs/gtm.md)               |
+| Knowledge    | `/knowledge`                    | FLF facts and messaging Claude reads before writing (docs/knowledge.md)                        |
+| Events       | `/events`                       | Meetings with contacts, from the calendars via the portal sheet                                |
+| Automations  | `/automations`                  | On/off switches, last run, recent runs; n8n workflows with status                              |
+| Connections  | `/connections`                  | Every integration: status, what it feeds, settings, setup steps, Test                          |
+| Health       | `/health`                       | Connections + automations + data freshness in one view, checked hourly                         |
+| Admin        | `/admin/users`, `/admin/groups` | Roles, Sherpa flag, groups of permissions                                                      |
 
 ## Where things are
 
@@ -37,7 +40,7 @@ Node 24 (`.nvmrc`), Java 21 for the emulators, `npm i -g firebase-tools`.
 
 ```sh
 npm install && (cd functions && npm install)
-printf 'LEAD_WEBHOOK_TOKEN=local-token\nSLACK_WEBHOOK_URL=\nFLF_MCP_KEY=%s\n' "$(openssl rand -base64 48)" > functions/.secret.local
+printf 'SLACK_WEBHOOK_URL=\nN8N_API_KEY=\nFLF_MCP_KEY=%s\n' "$(openssl rand -base64 48)" > functions/.secret.local
 printf 'FLF_HUB_URL=http://localhost:5002\n' > functions/.env.local
 npm run emulators:start            # auth, functions, firestore (+ app on :5002)
 node scripts/seed-emulator.mjs     # admin + sample data
@@ -69,8 +72,8 @@ The web app is a static site on **Hostinger** (`hub.foundersforlifefellowship.co
    `hub.foundersforlifefellowship.com`, remove anything not used.
 3. Google Cloud → APIs & Services → Credentials: restrict the browser API key to HTTP referrer
    `https://hub.foundersforlifefellowship.com/*`.
-4. Secrets: `firebase functions:secrets:set` for `LEAD_WEBHOOK_TOKEN`, `SLACK_WEBHOOK_URL`,
-   `FLF_MCP_KEY`, `CHECKLY_API_KEY`, `N8N_API_KEY` (empty is fine for the ones not set up yet).
+4. Secrets: `firebase functions:secrets:set` for `SLACK_WEBHOOK_URL`, `FLF_MCP_KEY`, `N8N_API_KEY`
+   (`unset` for the ones not set up yet: Secret Manager refuses empty values).
 5. `firebase deploy --only functions,firestore` (functions, rules and indexes).
 6. Sign in once, set your `user/{uid}.role` to `admin` in the Firestore console, sign in again.
 

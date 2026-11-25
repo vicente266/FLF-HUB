@@ -81,7 +81,8 @@
 
 	{#if tasks.length === 0}
 		<Empty title="No open tasks">
-			Automations create follow-ups as contacts move through the pipeline.
+			Automations create follow-ups as contacts move through the pipeline. You can also add one from
+			any contact's page.
 		</Empty>
 	{/if}
 

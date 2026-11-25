@@ -14,39 +14,38 @@ import * as user from './lib/user';
 import * as group from './lib/group';
 import { PERMISSIONS } from './lib/permissions';
 import * as crm from './lib/crm/index';
-import { CONTACT_TYPES, type ContactType } from './lib/crm/config';
 import * as automations from './lib/automations/index';
 import * as connections from './lib/connections/index';
 import * as reports from './lib/reports/index';
 import * as health from './lib/health/index';
 import * as claude from './lib/mcp/index';
+import * as knowledge from './lib/knowledge/index';
 import * as portal from './lib/portal/index';
 
 setGlobalOptions({ maxInstances: 10, region: REGION });
 
-/** Shared secret the website forms send in `x-flf-token`. */
-const leadWebhookToken = defineSecret('LEAD_WEBHOOK_TOKEN');
 /** Slack Incoming Webhook URL of the team channel. */
 const slackWebhookUrl = defineSecret('SLACK_WEBHOOK_URL');
-/** Checkly read API key (Health). */
-const checklyApiKey = defineSecret('CHECKLY_API_KEY');
 /** n8n API key, used only to list executions (Health). */
 const n8nApiKey = defineSecret('N8N_API_KEY');
 /** Signs the Claude connector's clients and tokens and seals its keys (docs/claude-connector.md). */
 const flfMcpKey = defineSecret('FLF_MCP_KEY');
 
+/** An optional secret's value; `unset` (Secret Manager can't store an empty value) or blank means not configured. */
+const optional = (s: { value(): string }): string | undefined => {
+	const v = s.value().trim();
+	return v && v !== 'unset' ? v : undefined;
+};
+
 const userLogger = utils.createLogger('user');
-const webhookLogger = utils.createLogger('crm').scope('webhook');
 
 /** Secrets for connection checks, read only inside handlers that declared them. */
 const secrets = (): connections.Secrets => ({
-	slackWebhookUrl: slackWebhookUrl.value() || undefined,
-	leadWebhookToken: leadWebhookToken.value() || undefined,
-	checklyApiKey: checklyApiKey.value() || undefined,
-	n8nApiKey: n8nApiKey.value() || undefined
+	slackWebhookUrl: optional(slackWebhookUrl),
+	n8nApiKey: optional(n8nApiKey)
 });
 /** Every secret a connection check reads. */
-const checkSecrets = [slackWebhookUrl, leadWebhookToken, checklyApiKey, n8nApiKey];
+const checkSecrets = [slackWebhookUrl, n8nApiKey];
 
 /*
  * EVERY callable is one `<feature>Action` dispatcher (see dispatch.ts). Add an action to the
@@ -108,6 +107,12 @@ export const coreAction = onCall(
 				return { ok: true };
 			}
 		},
+		/** The Knowledge list, active and expired, plus the active block Claude reads. */
+		'knowledge.list': { permission: 'knowledge.any.read', handler: knowledge.actions.list },
+		/** Add or edit a Knowledge entry. */
+		'knowledge.save': { permission: 'knowledge.any.write', handler: knowledge.actions.save },
+		/** Delete a Knowledge entry. */
+		'knowledge.delete': { permission: 'knowledge.any.write', handler: knowledge.actions.delete },
 		/** The Claude consent page: which app asks and where it sends you back. Writes nothing. */
 		'claude.client': {
 			handler: async (p) => claude.describeClient(claude.keys(flfMcpKey.value()), p)
@@ -148,6 +153,8 @@ export const crmAction = onCall(
 		'contact.update': { ...crmWrite, handler: crm.actions['contact.update'] },
 		/** Move a contact to another stage of its pipeline. */
 		'contact.stage': { ...crmWrite, handler: crm.actions['contact.stage'] },
+		/** Set a contact's next step (Plan Interaction, Awaiting for Response), or none. */
+		'contact.nextStep': { ...crmWrite, handler: crm.actions['contact.nextStep'] },
 		/** Give a contact an owner, or none. */
 		'contact.assign': { ...crmWrite, handler: crm.actions['contact.assign'] },
 		/** Delete a contact, its timeline and its tasks. */
@@ -156,6 +163,10 @@ export const crmAction = onCall(
 			denied: 'You cannot delete contacts.',
 			handler: crm.actions['contact.delete']
 		},
+		/** Create or edit a go-to-market strategy (name, segment, approach, status). */
+		'strategy.save': { ...crmWrite, handler: crm.actions['strategy.save'] },
+		/** Delete a strategy; its Partners stay, unlinked. */
+		'strategy.delete': { ...crmWrite, handler: crm.actions['strategy.delete'] },
 		/** Add a note to a contact's timeline. */
 		'note.add': { ...crmWrite, handler: crm.actions['note.add'] },
 		/** Create a task on a contact. */
@@ -169,13 +180,12 @@ export const reportsAction = onCall(
 	{ timeoutSeconds: 120 },
 	dispatch('reports', {
 		/** Pipeline funnel, sources and KPIs from the CRM. */
-		summary: { permission: 'reports.any.read', handler: reports.actions.summary },
-		/** The Google Sheets copied by the nightly sync. */
-		'sheets.list': { permission: 'reports.any.read', handler: reports.actions['sheets.list'] }
+		summary: { permission: 'reports.any.read', handler: reports.actions.summary }
 	})
 );
 
 export const automationsAction = onCall(
+	{ secrets: [n8nApiKey] },
 	dispatch('automations', {
 		/** Every automation the Hub runs. */
 		'config.get': {
@@ -183,7 +193,12 @@ export const automationsAction = onCall(
 			handler: automations.actions['config.get']
 		},
 		/** Turn an automation on or off. */
-		toggle: { permission: 'automations.any.write', handler: automations.actions.toggle }
+		toggle: { permission: 'automations.any.write', handler: automations.actions.toggle },
+		/** Every n8n workflow with its status, last run and recent failures (read only). */
+		'n8n.workflows': {
+			permission: 'automations.any.read',
+			handler: async () => ({ workflows: await connections.n8nWorkflows(optional(n8nApiKey)) })
+		}
 	})
 );
 
@@ -200,11 +215,6 @@ export const connectionsAction = onCall(
 		},
 		/** Check a connection now and record the result. */
 		test: { permission: 'connections.any.read', handler: connectionActions.test },
-		/** Copy the configured Google Sheets now. */
-		'sheets.sync': {
-			permission: 'connections.any.write',
-			handler: connectionActions['sheets.sync']
-		},
 		/** Connections, automations and data freshness in one list. */
 		'health.get': { permission: 'health.any.read', handler: async () => health.get() }
 	})
@@ -248,79 +258,27 @@ export const syncUserRole = onDocumentWritten('user/{uid}', async (event) => {
 	userLogger.log(`${event.params.uid} role set to ${role}`);
 });
 
-/** Runs the contact automations on create and on stage change. */
-export const crmContactWritten = onDocumentWritten(
-	{ document: 'contact/{id}', secrets: [slackWebhookUrl] },
-	async (event) => {
-		const after = event.data?.after;
-		if (!after?.exists) return;
-		const c = after.data() as crm.Contact;
-		const before = event.data?.before?.exists ? (event.data.before.data() as crm.Contact) : null;
-		// The portal import writes `portal.syncedAt`: those writes are copies of the sheet, so no
-		// owner assignment, Slack alert or follow-up task fires from them.
-		const synced = (x: crm.Contact | null) => (x as any)?.portal?.syncedAt?.toMillis?.();
-		if (synced(c) && synced(c) !== synced(before)) return;
-		if (!before) {
-			await automations.onContactCreated(event.params.id, c, slackWebhookUrl.value() || undefined);
-		} else if (before.stage !== c.stage) {
-			await automations.onStageChanged(event.params.id, c);
-		}
-	}
-);
-
-/**
- * Website form endpoint. POST JSON with header `x-flf-token`. Creates the contact, or adds a note
- * to the existing one when the email is already known.
- */
-export const crmLeadWebhook = onRequest(
-	{ secrets: [leadWebhookToken], cors: true },
-	async (req, res) => {
-		if (req.method !== 'POST') {
-			res.status(405).send('POST only');
-			return;
-		}
-		if (!leadWebhookToken.value() || req.get('x-flf-token') !== leadWebhookToken.value()) {
-			res.status(401).send('Unauthorized');
-			return;
-		}
-		const b = req.body ?? {};
-		const type = String(b.type ?? '').toLowerCase();
-		if (!(CONTACT_TYPES as readonly string[]).includes(type) || !b.name || !b.email) {
-			res.status(400).send('type, name and email are required');
-			return;
-		}
-		try {
-			const existing = await crm.findByEmail(String(b.email));
-			let id: string;
-			if (existing) {
-				id = existing.id;
-				await crm.logActivity(
-					id,
-					'note',
-					`Sent the ${type} form again${b.message ? `: ${b.message}` : ''}`,
-					'Website'
-				);
-			} else {
-				id = await crm.create(
-					{ ...b, type: type as ContactType, source: 'website', notes: b.message ?? '' },
-					'Website',
-					'website'
-				);
-			}
-			await connections.touchEvent('website-forms');
-			res.status(200).json({ ok: true, id });
-		} catch (err) {
-			webhookLogger.error('lead failed', err);
-			res.status(500).send('Error');
-		}
-	}
-);
+/** Runs the contact automations on stage change and on next-step change. */
+export const crmContactWritten = onDocumentWritten('contact/{id}', async (event) => {
+	const after = event.data?.after;
+	if (!after?.exists) return;
+	const c = after.data() as crm.Contact;
+	const before = event.data?.before?.exists ? (event.data.before.data() as crm.Contact) : null;
+	// The portal import writes `portal.syncedAt`: those writes are copies of the sheet, so no
+	// owner assignment, Slack alert or follow-up task fires from them.
+	const synced = (x: crm.Contact | null) => (x as any)?.portal?.syncedAt?.toMillis?.();
+	if (synced(c) && synced(c) !== synced(before)) return;
+	if (!before) return;
+	if (before.stage !== c.stage) await automations.onStageChanged(event.params.id, c);
+	if ((before.nextStep ?? '') !== (c.nextStep ?? ''))
+		await automations.onNextStepChanged(event.params.id, c);
+});
 
 /** Every morning: stale contacts, the digest, and the Claude connector's expired records. */
 export const automationsDaily = onSchedule(
 	{ schedule: '0 8 * * *', timeZone: 'Europe/Madrid', secrets: [slackWebhookUrl] },
 	async () => {
-		const url = slackWebhookUrl.value() || undefined;
+		const url = optional(slackWebhookUrl);
 		await automations.staleContacts(url);
 		await automations.dailyDigest(url);
 		const cleaned = await claude.cleanUp();
@@ -334,7 +292,7 @@ export const automationsDaily = onSchedule(
  */
 export const claudeMcp = onRequest(
 	{
-		// The tools run other dispatchers' actions (connections:test reads Slack and the lead token),
+		// The tools run other dispatchers' actions (connections:test reads Slack and n8n),
 		// so the connector holds those secrets too.
 		secrets: [flfMcpKey, ...checkSecrets],
 		timeoutSeconds: 60,
@@ -352,20 +310,17 @@ export const claudeMcp = onRequest(
 	}
 );
 
-/** Every night: copy Google Sheets for Reports, then import the portal sheet (read-only). */
-export const sheetsNightly = onSchedule(
+/** Every night: import the portal sheet (read-only on the sheet). */
+export const portalNightly = onSchedule(
 	{ schedule: '0 3 * * *', timeZone: 'Europe/Madrid', timeoutSeconds: 540, memory: '512MiB' },
-	async () => {
-		await automations.sheetsSync();
-		await automations.portalSync();
-	}
+	async () => automations.portalSync()
 );
 
 /** Every hour: check every connection so Health is current. */
 export const healthHourly = onSchedule(
 	{
 		schedule: 'every 60 minutes',
-		secrets: [slackWebhookUrl, leadWebhookToken],
+		secrets: checkSecrets,
 		timeoutSeconds: 300
 	},
 	async () => connections.testAll(secrets())

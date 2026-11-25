@@ -50,7 +50,7 @@
 		ok: 'Working',
 		error: 'Failing',
 		not_configured: 'Needs setup',
-		not_checked: 'Not checked',
+		not_checked: 'Not checked yet',
 		planned: 'Planned'
 	};
 
@@ -88,8 +88,6 @@
 				{ timeout: 300_000 }
 			);
 		});
-	const syncSheets = () =>
-		run('sync', () => callAction('connections:sheets.sync', {}, { timeout: 300_000 }));
 
 	let grouped = $derived(
 		categories
@@ -112,7 +110,7 @@
 			<div class="eyebrow">Connection map</div>
 			<p class="mt-1 text-sm text-ink-soft">
 				{working} of {live.length} live connections working · {connectors.length - live.length} planned.
-				Secrets (tokens, keys) are never stored here: they go in Secret Manager.
+				Passwords and API keys are never stored here; a developer adds them in Google Cloud.
 			</p>
 		</div>
 		<a href="/health" class="btn-ghost">Open Health</a>
@@ -152,14 +150,14 @@
 							<div class="grid grid-cols-2 gap-6 border-t border-line/60 px-4 py-4 text-sm">
 								<div class="space-y-3">
 									<div>
-										<div class="label">Setup</div>
+										<div class="label">How to set it up</div>
 										<ol class="list-decimal space-y-1 pl-4 text-ink-soft">
 											{#each c.setup as step, i (i)}<li>{step}</li>{/each}
 										</ol>
 									</div>
 									{#if c.secrets.length}
 										<div>
-											<div class="label">Secrets (Secret Manager)</div>
+											<div class="label">Keys (added by a developer)</div>
 											<div class="flex flex-wrap gap-1">
 												{#each c.secrets as name (name)}
 													<code
@@ -230,7 +228,7 @@
 												<button class="btn-ghost" disabled={busy !== null} onclick={() => test(c)}>
 													<RefreshCw
 														class="h-4 w-4 {busy === `test:${c.id}` ? 'animate-spin' : ''}"
-													/> Test
+													/> Test connection
 												</button>
 											{/if}
 											{#if c.id === 'portal-sheet' && canWrite}
@@ -239,18 +237,13 @@
 													disabled={busy !== null}
 													onclick={() => portal('sync.plan')}
 												>
-													Dry run
+													Preview import
 												</button>
 												<button
 													class="btn-ghost"
 													disabled={busy !== null}
 													onclick={() => portal('sync.run')}
 												>
-													Sync now
-												</button>
-											{/if}
-											{#if c.id === 'google-sheets' && canWrite}
-												<button class="btn-ghost" disabled={busy !== null} onclick={syncSheets}>
 													Sync now
 												</button>
 											{/if}

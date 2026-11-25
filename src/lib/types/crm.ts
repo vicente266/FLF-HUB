@@ -23,6 +23,22 @@ export interface CrmConfig {
 	sources: string[];
 	pipelines: Record<ContactType, Pipeline>;
 	staleDays: number;
+	/** The sheet's Status values; setting one gives the owner a task. */
+	nextSteps: { id: string; label: string; task: string; days: number }[];
+	/** Kinds of Partner organisation (VC fund, university…). */
+	segments: { id: string; label: string }[];
+	strategyStatuses: string[];
+}
+
+/** A go-to-market strategy; Partners link to it with `strategyId`. */
+export interface Strategy {
+	id: string;
+	name: string;
+	segment: string;
+	status: 'active' | 'paused' | 'done';
+	description: string;
+	updatedBy?: string;
+	updatedAt?: unknown;
 }
 
 export interface Contact {
@@ -41,6 +57,10 @@ export interface Contact {
 	tags: string[];
 	notes: string;
 	needsAttention: boolean;
+	nextStep?: string;
+	/** Partners: kind of organisation and go-to-market strategy. */
+	segment?: string;
+	strategyId?: string;
 	/** The portal sheet's view, when the contact was imported from it. */
 	portal?: {
 		from: string;
@@ -52,6 +72,12 @@ export interface Contact {
 		sherpaName: string | null;
 		archetype: string | null;
 		funnelStage: string | null;
+		/** Profiles: can sign in to the portal ("Show in portal"). */
+		onPortal?: boolean | null;
+		/** Profiles: link to the signed Founder's Pledge. */
+		contractUrl?: string | null;
+		reasonsWhy?: string | null;
+		lastInteraction?: unknown;
 		nextStep: string | null;
 		scoring: string | null;
 		reasonLost: string | null;
@@ -65,7 +91,7 @@ export interface Contact {
 
 export interface Activity {
 	id: string;
-	kind: 'created' | 'note' | 'stage' | 'assigned' | 'automation' | 'updated';
+	kind: 'created' | 'note' | 'stage' | 'assigned' | 'automation' | 'updated' | 'meeting';
 	text: string;
 	by: string;
 	at: unknown;
@@ -112,4 +138,18 @@ export interface ContactDraft {
 	source: string;
 	tags: string;
 	notes: string;
+	segment?: string;
+	strategyId?: string;
+}
+
+/** A meeting from the portal sheet's Events tab (n8n's "Calendar → Events database"). */
+export interface CalendarEvent {
+	id: string;
+	title: string;
+	type: string;
+	date: unknown;
+	description: string;
+	showInPortal: boolean;
+	participants: { name: string; contactId: string | null }[];
+	contactIds: string[];
 }
