@@ -10,7 +10,7 @@ export interface KnowledgeEntry {
 	description: string;
 	/** Optional expiry as `YYYY-MM-DD`; once past, the entry is no longer given to Claude. */
 	expiredAt?: string;
-	/** How Claude uses it; missing = always (entries from before uses existed). */
+	/** How Claude uses it; missing = relevant. Only an approved entry is really "Always". */
 	use?: KnowledgeUse;
 	topics?: string[];
 	/** `drive` = imported from the Knowledge folder (its text is edited in Drive). */
@@ -20,6 +20,25 @@ export interface KnowledgeEntry {
 	truncated?: boolean;
 	updatedBy?: string;
 	updatedAt?: unknown;
+	/** The card (docs/knowledge.md, "The card"). Missing type = other. */
+	type?: string;
+	/** "Use when …". */
+	useWhen?: string;
+	/** Missing = internal. */
+	audience?: 'external' | 'internal' | 'restricted';
+	/** Missing = draft. */
+	status?: 'draft' | 'approved';
+	approvedBy?: string;
+	approvedOn?: string;
+	lastReviewed?: string;
+	reviewEvery?: number;
+}
+
+/** A choice defined in the backend config (type, audience), with its help text. */
+export interface KnowledgeOption {
+	id: string;
+	label: string;
+	help: string;
 }
 
 export interface KnowledgeUseOption {

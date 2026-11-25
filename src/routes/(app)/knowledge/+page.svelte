@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { collection, query, orderBy, limit } from 'firebase/firestore';
+	import { collection, query, orderBy, limit, where } from 'firebase/firestore';
 	import Plus from '@lucide/svelte/icons/plus';
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import Trash from '@lucide/svelte/icons/trash-2';
@@ -12,7 +12,13 @@
 	import { db } from '$lib/firebase';
 	import { callAction, errorText } from '$lib/actions';
 	import { hasPermission, listen, setTitle, formatDate, formatDateTime } from '$lib/utils';
-	import type { KnowledgeEntry, KnowledgeUse, KnowledgeUseOption } from '$lib/types/knowledge';
+	import { me } from '$lib/stores';
+	import type {
+		KnowledgeEntry,
+		KnowledgeOption,
+		KnowledgeUse,
+		KnowledgeUseOption
+	} from '$lib/types/knowledge';
 	import { isExpired } from '$lib/components/knowledge/expiry';
 	import KnowledgeModal from '$lib/components/knowledge/KnowledgeModal.svelte';
 	import Modal from '$lib/components/shared/Modal.svelte';
@@ -26,9 +32,17 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
+	// Restricted entries are for admins: everyone else asks only for the others (the rules check it).
 	$effect(() =>
 		listen<KnowledgeEntry>(
-			query(collection(db, 'knowledge'), orderBy('createdAt'), limit(200)),
+			$me?.role === 'admin'
+				? query(collection(db, 'knowledge'), orderBy('createdAt'), limit(200))
+				: query(
+						collection(db, 'knowledge'),
+						where('audience', 'in', ['external', 'internal']),
+						orderBy('createdAt'),
+						limit(200)
+					),
 			(rows) => {
 				entries = rows;
 				loading = false;
@@ -42,19 +56,43 @@
 
 	// The choices and the folder are defined in the backend (functions/src/lib/knowledge/config.ts).
 	let uses = $state<KnowledgeUseOption[]>([]);
+	// Types in order of precedence: the first one wins when two entries disagree.
+	let types = $state<KnowledgeOption[]>([]);
+	let audiences = $state<KnowledgeOption[]>([]);
+	let reviewEvery = $state<number[]>([]);
 	let folder = $state<{ id: string; url: string } | null>(null);
 	onMount(() => {
-		callAction<{ uses: KnowledgeUseOption[]; folder: { id: string; url: string } }>(
-			'core:knowledge.list'
-		)
+		callAction<{
+			uses: KnowledgeUseOption[];
+			types: KnowledgeOption[];
+			audiences: KnowledgeOption[];
+			reviewEvery: number[];
+			folder: { id: string; url: string };
+		}>('core:knowledge.list')
 			.then((r) => {
 				uses = r.uses;
+				types = r.types;
+				audiences = r.audiences;
+				reviewEvery = r.reviewEvery;
 				folder = r.folder;
 			})
 			.catch((e) => (error = errorText(e)));
 	});
 
-	const useOf = (e: KnowledgeEntry): KnowledgeUse => e.use ?? 'relevant';
+	const approved = (e: KnowledgeEntry) => e.status === 'approved';
+	// As the backend applies it: a draft set to Always is read only when relevant.
+	const useOf = (e: KnowledgeEntry): KnowledgeUse => {
+		const use = e.use ?? 'relevant';
+		return use === 'always' && !approved(e) ? 'relevant' : use;
+	};
+	const todayIso = () => new Date().toISOString().slice(0, 10);
+	function reviewDue(e: KnowledgeEntry): boolean {
+		if (!approved(e)) return false;
+		if (!e.lastReviewed) return true;
+		const [y, m, dd] = e.lastReviewed.split('-').map(Number);
+		const due = new Date(Date.UTC(y, m - 1 + (e.reviewEvery ?? 6), dd));
+		return due.toISOString().slice(0, 10) <= todayIso();
+	}
 	// In force = not expired; expired ones stay reachable to re-date or delete.
 	let current = $derived(entries.filter((e) => !isExpired(e)));
 	let expired = $derived(entries.filter((e) => isExpired(e)));
@@ -64,6 +102,30 @@
 		off: current.filter((e) => useOf(e) === 'off').length
 	});
 	let showExpired = $state(false);
+	// In force entries by type, in order of precedence.
+	let groups = $derived(
+		types
+			.map((t, i) => ({
+				...t,
+				rank: i + 1,
+				rows: current.filter((e) => (e.type ?? 'other') === t.id)
+			}))
+			.filter((g) => g.rows.length)
+	);
+
+	// Approving and reviewing are for people (the backend refuses them via Claude).
+	let approving = $state<string | null>(null);
+	async function setCard(e: KnowledgeEntry, card: Record<string, unknown>) {
+		error = null;
+		approving = e.id;
+		try {
+			await callAction('core:knowledge.save', { id: e.id, entry: card });
+		} catch (err) {
+			error = errorText(err);
+		} finally {
+			approving = null;
+		}
+	}
 
 	let editOpen = $state(false);
 	let editing = $state<KnowledgeEntry | null>(null);
@@ -122,9 +184,10 @@
 
 	// What Claude receives: the "Always" entries, and the titles of the "When relevant" ones.
 	let claudeOpen = $state(false);
-	let claude = $state<{ active: string; relevant: { label: string; topics: string[] }[] } | null>(
-		null
-	);
+	let claude = $state<{
+		active: string;
+		relevant: { label: string; topics: string[]; useWhen: string }[];
+	} | null>(null);
 	let claudeError = $state<string | null>(null);
 	async function showClaude() {
 		claude = null;
@@ -174,6 +237,32 @@
 						{e.label}
 					</span>
 				{/if}
+				{#if approved(e)}
+					<span
+						class="rounded bg-success/10 px-1.5 py-0.5 text-xs font-semibold text-success"
+						title="Approved by {e.approvedBy} on {e.approvedOn ? day(e.approvedOn) : ''}"
+					>
+						Approved
+					</span>
+				{:else}
+					<span class="rounded bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-800">
+						Draft
+					</span>
+				{/if}
+				{#if reviewDue(e)}
+					<span class="rounded bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-800">
+						Review due
+					</span>
+				{/if}
+				{#if e.audience && e.audience !== 'internal'}
+					<span
+						class="rounded px-1.5 py-0.5 text-xs font-semibold {e.audience === 'restricted'
+							? 'bg-danger/10 text-danger'
+							: 'bg-primary-50 text-primary-700'}"
+					>
+						{e.audience === 'restricted' ? 'Admins only' : 'External'}
+					</span>
+				{/if}
 				{#if e.source === 'drive'}
 					<span class="rounded bg-canvas px-1.5 py-0.5 text-xs font-semibold text-ink-soft">
 						Drive{e.truncated ? ' · cut at 50,000 characters' : ''}
@@ -204,6 +293,13 @@
 			>
 				{firstLine(e)}
 			</button>
+			{#if e.useWhen}
+				<div class="mt-0.5 truncate text-xs text-ink">{e.useWhen}</div>
+			{:else if canWrite}
+				<div class="mt-0.5 text-xs text-amber-800">
+					No “Use when” yet: Claude can't tell when to read it.
+				</div>
+			{/if}
 			{#if e.updatedBy}
 				<div class="mt-0.5 text-xs text-ink-soft">
 					{e.updatedBy} · {formatDateTime(e.updatedAt)}
@@ -211,6 +307,25 @@
 			{/if}
 		</div>
 		<div class="flex shrink-0 items-center gap-1">
+			{#if canWrite && !approved(e)}
+				<button
+					class="btn-ghost px-2 text-xs font-semibold text-success"
+					disabled={approving === e.id}
+					title="Approve: it becomes confirmed knowledge and can be set to Always"
+					onclick={() => setCard(e, { status: 'approved' })}
+				>
+					Approve
+				</button>
+			{:else if canWrite && reviewDue(e)}
+				<button
+					class="btn-ghost px-2 text-xs font-semibold"
+					disabled={approving === e.id}
+					title="Checked and still right"
+					onclick={() => setCard(e, { reviewed: true })}
+				>
+					Mark reviewed
+				</button>
+			{/if}
 			{#if canWrite && uses.length}
 				<select
 					class="rounded-md border border-line bg-white px-2 py-1 text-xs font-semibold focus:ring-focus {USE_TONE[
@@ -221,7 +336,9 @@
 					value={useOf(e)}
 					onchange={(ev) => setUse(e, ev.currentTarget.value)}
 				>
-					{#each uses as u (u.id)}<option value={u.id}>{u.label}</option>{/each}
+					{#each uses as u (u.id)}<option value={u.id} disabled={u.id === 'always' && !approved(e)}>
+							{u.label}
+						</option>{/each}
 				</select>
 			{:else}
 				<span class="text-xs font-semibold {USE_TONE[useOf(e)]}">
@@ -275,6 +392,8 @@
 					in Drive. <strong>Always</strong>: Claude reads it before writing anything about FLF.
 					<strong>When relevant</strong>: Claude sees its title and topics and opens it when the
 					task needs it. <strong>Off</strong>: never given to Claude. Expired entries are left out.
+					Only an <strong>approved</strong> entry can be Always. When two entries disagree, the type with
+					the lower number wins, then approved over draft, then the more recently reviewed.
 				</p>
 			</div>
 			<div class="flex shrink-0 flex-wrap justify-end gap-2">
@@ -312,8 +431,17 @@
 			<p class="px-4 py-4 text-sm text-ink-soft">Loading…</p>
 		{:else}
 			<ul class="divide-y divide-line/40">
-				{#each current as e (e.id)}
-					{@render row(e)}
+				{#each groups as g (g.id)}
+					<li
+						class="flex items-baseline gap-2 bg-canvas/60 px-4 py-1.5 text-xs font-bold tracking-wide text-ink-soft uppercase"
+						title="When two entries disagree, the lower number wins"
+					>
+						{g.rank} · {g.label}
+						<span class="font-normal tracking-normal normal-case">{g.help}</span>
+					</li>
+					{#each g.rows as e (e.id)}
+						{@render row(e)}
+					{/each}
 				{:else}
 					<li class="px-4 py-2">
 						<Empty title={entries.length ? 'Every entry has expired' : 'No knowledge yet'}>
@@ -348,7 +476,7 @@
 	</section>
 </div>
 
-<KnowledgeModal bind:open={editOpen} entry={editing} {uses} />
+<KnowledgeModal bind:open={editOpen} entry={editing} {uses} {types} {audiences} {reviewEvery} />
 
 <Modal bind:open={previewOpen} title={preview?.label || 'Entry'} width="max-w-2xl">
 	{#if preview}
@@ -377,7 +505,9 @@
 			<ul class="space-y-0.5 text-sm">
 				{#each claude.relevant as r (r.label + r.topics.join())}
 					<li>
-						{r.label}{#if r.topics.length}<span class="text-xs text-ink-soft">
+						{r.label}{#if r.useWhen}<span class="text-xs text-ink">
+								· {r.useWhen}
+							</span>{/if}{#if r.topics.length}<span class="text-xs text-ink-soft">
 								· {r.topics.join(', ')}
 							</span>{/if}
 					</li>

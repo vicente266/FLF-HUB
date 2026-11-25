@@ -2,7 +2,7 @@
 	import Save from '@lucide/svelte/icons/save';
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import { callAction, errorText } from '$lib/actions';
-	import type { KnowledgeEntry, KnowledgeUseOption } from '$lib/types/knowledge';
+	import type { KnowledgeEntry, KnowledgeOption, KnowledgeUseOption } from '$lib/types/knowledge';
 	import Modal from '$lib/components/shared/Modal.svelte';
 	import FormError from '$lib/components/shared/FormError.svelte';
 
@@ -12,15 +12,32 @@
 	let {
 		open = $bindable(false),
 		entry,
-		uses
+		uses,
+		types,
+		audiences,
+		reviewEvery
 	}: {
 		open: boolean;
 		/** The entry to edit, or null to add one. */
 		entry: KnowledgeEntry | null;
 		uses: KnowledgeUseOption[];
+		types: KnowledgeOption[];
+		audiences: KnowledgeOption[];
+		reviewEvery: number[];
 	} = $props();
 
-	let draft = $state({ label: '', description: '', expiredAt: '', use: 'relevant', topics: '' });
+	let draft = $state({
+		label: '',
+		description: '',
+		expiredAt: '',
+		use: 'relevant',
+		topics: '',
+		type: 'other',
+		useWhen: '',
+		audience: 'internal',
+		reviewEvery: 6
+	});
+	let approved = $derived(entry?.status === 'approved');
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 	let imported = $derived(entry?.source === 'drive');
@@ -33,7 +50,11 @@
 				description: entry?.description ?? '',
 				expiredAt: entry?.expiredAt ?? '',
 				use: entry?.use ?? 'relevant',
-				topics: (entry?.topics ?? []).join(', ')
+				topics: (entry?.topics ?? []).join(', '),
+				type: entry?.type ?? 'other',
+				useWhen: entry?.useWhen ?? '',
+				audience: entry?.audience ?? 'internal',
+				reviewEvery: entry?.reviewEvery ?? 6
 			};
 			error = null;
 		}
@@ -56,17 +77,20 @@
 				.split(',')
 				.map((t) => t.trim())
 				.filter(Boolean);
+			const card = {
+				expiredAt: draft.expiredAt.trim(),
+				use: draft.use,
+				topics,
+				type: draft.type,
+				useWhen: draft.useWhen.trim(),
+				audience: draft.audience,
+				reviewEvery: Number(draft.reviewEvery)
+			};
 			await callAction('core:knowledge.save', {
 				id: entry?.id ?? null,
 				entry: imported
-					? { expiredAt: draft.expiredAt.trim(), use: draft.use, topics }
-					: {
-							label: draft.label.trim(),
-							description: draft.description.trim(),
-							expiredAt: draft.expiredAt.trim(),
-							use: draft.use,
-							topics
-						}
+					? card
+					: { label: draft.label.trim(), description: draft.description.trim(), ...card }
 			});
 			open = false;
 		} catch (e) {
@@ -117,11 +141,50 @@
 				></textarea>
 			</div>
 		{/if}
+		<div>
+			<label class="label" for="k-usewhen">Use when</label>
+			<input
+				id="k-usewhen"
+				class="input"
+				maxlength="300"
+				bind:value={draft.useWhen}
+				placeholder="e.g. Use when someone asks what a Fellow pledges and for how long."
+			/>
+			<p class="mt-1 text-xs text-ink-soft">
+				One sentence: Claude reads the entry when the task matches it.
+			</p>
+		</div>
+		<div class="grid grid-cols-3 gap-3">
+			<div>
+				<label class="label" for="k-type">Type</label>
+				<select id="k-type" class="input" bind:value={draft.type}>
+					{#each types as t (t.id)}<option value={t.id}>{t.label}</option>{/each}
+				</select>
+				<p class="mt-1 text-xs text-ink-soft">{types.find((t) => t.id === draft.type)?.help}</p>
+			</div>
+			<div>
+				<label class="label" for="k-audience">Audience</label>
+				<select id="k-audience" class="input" bind:value={draft.audience}>
+					{#each audiences as a (a.id)}<option value={a.id}>{a.label}</option>{/each}
+				</select>
+				<p class="mt-1 text-xs text-ink-soft">
+					{audiences.find((a) => a.id === draft.audience)?.help}
+				</p>
+			</div>
+			<div>
+				<label class="label" for="k-review">Review every</label>
+				<select id="k-review" class="input" bind:value={draft.reviewEvery}>
+					{#each reviewEvery as m (m)}<option value={m}>{m} months</option>{/each}
+				</select>
+			</div>
+		</div>
 		<div class="grid grid-cols-2 gap-3">
 			<div>
 				<label class="label" for="k-use">How Claude uses it</label>
 				<select id="k-use" class="input" bind:value={draft.use}>
-					{#each uses as u (u.id)}<option value={u.id}>{u.label}</option>{/each}
+					{#each uses as u (u.id)}<option value={u.id} disabled={u.id === 'always' && !approved}>
+							{u.label}{u.id === 'always' && !approved ? ' (approve it first)' : ''}
+						</option>{/each}
 				</select>
 				<p class="mt-1 text-xs text-ink-soft">{uses.find((u) => u.id === draft.use)?.help}</p>
 			</div>

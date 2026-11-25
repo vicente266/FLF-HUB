@@ -259,6 +259,20 @@
 					"order": "ASCENDING"
 				}
 			]
+		},
+		{
+			"collectionGroup": "knowledge",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "audience",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "createdAt",
+					"order": "ASCENDING"
+				}
+			]
 		}
 	],
 	"fieldOverrides": []

@@ -13,8 +13,18 @@ import {
 	MAX_LABEL,
 	MAX_TOPIC,
 	MAX_TOPICS,
+	MAX_USE_WHEN,
 	USES,
-	type Use
+	TYPES,
+	AUDIENCES,
+	STATUSES,
+	REVIEW_EVERY,
+	DEFAULT_REVIEW_EVERY,
+	typeOfFolder,
+	type Use,
+	type KnowledgeType,
+	type Audience,
+	type Status
 } from './config';
 
 /**
@@ -40,6 +50,21 @@ export interface Knowledge {
 	topics?: string[];
 	/** `drive` when imported from the Knowledge folder; missing = written in the Hub. */
 	source?: 'hub' | 'drive';
+	/** Its card, as in the EBS knowledge repo's header (docs/knowledge.md, "The card"). */
+	type?: KnowledgeType;
+	/** "Use when …": when Claude should read it. */
+	useWhen?: string;
+	/** Missing = internal. */
+	audience?: Audience;
+	/** Missing = draft. */
+	status?: Status;
+	approvedBy?: string;
+	/** `YYYY-MM-DD`. */
+	approvedOn?: string;
+	/** `YYYY-MM-DD`; set on approval and on each review. */
+	lastReviewed?: string;
+	/** Months between reviews. */
+	reviewEvery?: number;
 }
 
 export type Entry = Knowledge & {
@@ -56,7 +81,34 @@ export function isExpired(entry: { expiredAt?: string }, today = todayIso()): bo
 	return !!entry.expiredAt && entry.expiredAt < today;
 }
 
-const useOf = (e: Knowledge): Use => e.use ?? 'relevant';
+const statusOf = (e: Knowledge): Status => e.status ?? 'draft';
+const audienceOf = (e: Knowledge): Audience => e.audience ?? 'internal';
+/** How Claude gets it. Only an approved entry is "Always": a draft one is read when relevant. */
+const useOf = (e: Knowledge): Use => {
+	const use = e.use ?? 'relevant';
+	return use === 'always' && statusOf(e) !== 'approved' ? 'relevant' : use;
+};
+/** Restricted entries are for admins only, in the Hub and through Claude. */
+const visibleTo = (admin: boolean) => (e: Knowledge) => admin || audienceOf(e) !== 'restricted';
+const isAdmin = (auth: any) => auth?.token?.role === 'admin';
+
+/** An approved entry past its review date (`lastReviewed` + `reviewEvery` months). */
+export function reviewDue(e: Knowledge, today = todayIso()): boolean {
+	if (statusOf(e) !== 'approved') return false;
+	if (!e.lastReviewed) return true;
+	const d = new Date(`${e.lastReviewed}T00:00:00Z`);
+	d.setUTCMonth(d.getUTCMonth() + (e.reviewEvery ?? DEFAULT_REVIEW_EVERY));
+	return d.toISOString().slice(0, 10) <= today;
+}
+
+/**
+ * Which entry wins when two disagree (docs/knowledge.md, "Precedence"): the type higher in TYPES,
+ * then approved over draft, then the more recently approved or reviewed. Lower rank = stronger.
+ */
+export function rankOf(e: Knowledge): number {
+	const t = TYPES.findIndex((x) => x.id === (e.type ?? 'other'));
+	return (t < 0 ? TYPES.length : t) * 2 + (statusOf(e) === 'approved' ? 0 : 1) + 1;
+}
 
 /**
  * One entry as its own `<entry label="…" topics="…" valid_until="…">` block, text verbatim inside,
@@ -67,6 +119,10 @@ function toEntry(entry: Knowledge): string {
 	const label = entry.label ? attr(entry.label) : '';
 	const topics = (entry.topics ?? []).map(attr).join(', ');
 	const expiredAt = entry.expiredAt?.trim();
+	const type = entry.type && entry.type !== 'other' ? entry.type : '';
+	const useWhen = entry.useWhen ? attr(entry.useWhen) : '';
+	const status = statusOf(entry);
+	const decided = entry.lastReviewed || entry.approvedOn || '';
 	// An entry's own text can't close its block or open another (or the knowledge frame).
 	const description = (entry.description?.trim() ?? '').replace(
 		/<(\/?)(entry|flf_knowledge)\b/gi,
@@ -75,6 +131,12 @@ function toEntry(entry: Knowledge): string {
 	if (!description) return label ? `<entry>\n${label}\n</entry>` : '';
 	const attrs = [
 		label && ` label="${label}"`,
+		type && ` type="${type}"`,
+		` rank="${rankOf(entry)}"`,
+		` status="${status}"`,
+		decided && ` reviewed="${decided}"`,
+		useWhen && ` use_when="${useWhen}"`,
+		audienceOf(entry) !== 'internal' && ` audience="${audienceOf(entry)}"`,
 		topics && ` topics="${topics}"`,
 		expiredAt && ` valid_until="${expiredAt}"`
 	]
@@ -88,6 +150,7 @@ export function formatKnowledge(entries: Knowledge[]): string {
 	const today = todayIso();
 	return entries
 		.filter((e) => useOf(e) === 'always' && !isExpired(e, today))
+		.sort((a, b) => rankOf(a) - rankOf(b))
 		.map(toEntry)
 		.filter(Boolean)
 		.join('\n\n');
@@ -98,21 +161,30 @@ export function relevantIndex(entries: Entry[]) {
 	const today = todayIso();
 	return entries
 		.filter((e) => useOf(e) === 'relevant' && !isExpired(e, today))
-		.map((e) => ({ id: e.id, label: e.label || '(untitled)', topics: e.topics ?? [] }));
+		.sort((a, b) => rankOf(a) - rankOf(b))
+		.map((e) => ({
+			id: e.id,
+			label: e.label || '(untitled)',
+			type: e.type ?? 'other',
+			rank: rankOf(e),
+			status: statusOf(e),
+			useWhen: e.useWhen ?? '',
+			topics: e.topics ?? []
+		}));
 }
 
 /** The full text of the chosen entries (by id, or every one with a topic), never `off` or expired. */
 export function pick(entries: Entry[], ids: string[], topic: string): string {
 	const today = todayIso();
 	const t = topic.trim().toLowerCase();
-	return formatKnowledge(
-		entries
-			.filter((e) => useOf(e) !== 'off' && !isExpired(e, today))
-			.filter(
-				(e) => ids.includes(e.id) || (t && (e.topics ?? []).some((x) => x.toLowerCase() === t))
-			)
-			.map((e) => ({ ...e, use: 'always' as const }))
-	);
+	// Asked for by id or topic, so given whatever its status: its status attribute says which.
+	return entries
+		.filter((e) => useOf(e) !== 'off' && !isExpired(e, today))
+		.filter((e) => ids.includes(e.id) || (t && (e.topics ?? []).some((x) => x.toLowerCase() === t)))
+		.sort((a, b) => rankOf(a) - rankOf(b))
+		.map(toEntry)
+		.filter(Boolean)
+		.join('\n\n');
 }
 
 export async function list(): Promise<Entry[]> {
@@ -129,14 +201,22 @@ export async function list(): Promise<Entry[]> {
 			source: x.source === 'drive' ? 'drive' : 'hub',
 			url: x.url ?? '',
 			truncated: x.truncated === true,
-			updatedBy: x.updatedBy ?? ''
+			updatedBy: x.updatedBy ?? '',
+			type: (x.type as KnowledgeType) ?? 'other',
+			useWhen: x.useWhen ?? '',
+			audience: (x.audience as Audience) ?? 'internal',
+			status: (x.status as Status) ?? 'draft',
+			approvedBy: x.approvedBy ?? '',
+			approvedOn: x.approvedOn ?? '',
+			lastReviewed: x.lastReviewed ?? '',
+			reviewEvery: x.reviewEvery ?? DEFAULT_REVIEW_EVERY
 		};
 	});
 }
 
 /** The always-on block (empty string when none), read fresh so expiry is honoured. */
-export async function activeText(): Promise<string> {
-	return formatKnowledge(await list());
+export async function activeText(auth?: any): Promise<string> {
+	return formatKnowledge((await list()).filter(visibleTo(isAdmin(auth))));
 }
 
 const who = (auth: any) => {
@@ -157,6 +237,47 @@ function cleanUse(p: any): { use: Use; topics: string[] } {
 			`Use at most ${MAX_TOPICS} topics of ${MAX_TOPIC} characters.`
 		);
 	return { use, topics: topics as string[] };
+}
+
+/**
+ * The entry's card from the payload, checked; `prev` is what is stored. Approving (or marking it
+ * reviewed) is for people: Claude can propose a card but not approve one. Only an approved entry
+ * can be "Always".
+ */
+function cleanCard(p: any, prev: Knowledge | undefined, auth: any, use: Use) {
+	const type = (p?.type ?? prev?.type ?? 'other') as KnowledgeType;
+	if (!TYPES.some((t) => t.id === type)) throw new HttpsError('invalid-argument', 'Pick a type.');
+	const useWhen = str(p?.useWhen ?? prev?.useWhen ?? '', 'useWhen', false);
+	if (useWhen.length > MAX_USE_WHEN)
+		throw new HttpsError('invalid-argument', `Keep "Use when" under ${MAX_USE_WHEN} characters.`);
+	const audience = (p?.audience ?? prev?.audience ?? 'internal') as Audience;
+	if (!AUDIENCES.some((a) => a.id === audience))
+		throw new HttpsError('invalid-argument', 'Pick an audience: external, internal or restricted.');
+	const status = (p?.status ?? prev?.status ?? 'draft') as Status;
+	if (!STATUSES.some((x) => x.id === status))
+		throw new HttpsError('invalid-argument', 'Pick a status: draft or approved.');
+	const reviewEvery = Number(p?.reviewEvery ?? prev?.reviewEvery ?? DEFAULT_REVIEW_EVERY);
+	if (!(REVIEW_EVERY as readonly number[]).includes(reviewEvery))
+		throw new HttpsError('invalid-argument', `Review every ${REVIEW_EVERY.join(', ')} months.`);
+	const approving = status === 'approved' && prev?.status !== 'approved';
+	const reviewing = p?.reviewed === true && status === 'approved';
+	if ((approving || reviewing) && callVia() === 'claude')
+		throw new HttpsError(
+			'permission-denied',
+			'Only a person approves or reviews knowledge: ask them to do it on the Knowledge page.'
+		);
+	if (use === 'always' && status !== 'approved')
+		throw new HttpsError('failed-precondition', 'Approve the entry before setting it to Always.');
+	const today = todayIso();
+	const approval =
+		status === 'approved'
+			? {
+					approvedBy: approving ? who(auth) : (prev?.approvedBy ?? who(auth)),
+					approvedOn: approving ? today : (prev?.approvedOn ?? today),
+					lastReviewed: approving || reviewing ? today : (prev?.lastReviewed ?? today)
+				}
+			: { approvedBy: '', approvedOn: '', lastReviewed: '' };
+	return { type, useWhen, audience, status, reviewEvery, ...approval };
 }
 
 function clean(p: any) {
@@ -351,8 +472,11 @@ export async function importFolder() {
 			skipped.push(`${where(f)} (can't be read: not shared with the Hub)`);
 			continue;
 		}
+		// Its type from its top subfolder, unless the team set one in the Hub.
+		const type = prev?.type && prev.type !== 'other' ? prev.type : typeOfFolder(f.path[0]);
 		const body = {
 			label: f.name.slice(0, MAX_LABEL),
+			type,
 			description: text.slice(0, MAX_IMPORTED),
 			truncated: text.length > MAX_IMPORTED,
 			source: 'drive',
@@ -362,13 +486,26 @@ export async function importFolder() {
 			updatedAt: serverTimestamp()
 		};
 		if (prev) {
-			await collection.doc(docId).set(body, { merge: true });
+			// The text changed in Drive: a person approves it again (until then it's not "Always").
+			const changed = prev.driveModifiedTime !== f.modifiedTime;
+			await collection
+				.doc(docId)
+				.set(
+					changed && prev.status === 'approved'
+						? { ...body, status: 'draft', approvedBy: '', approvedOn: '', lastReviewed: '' }
+						: body,
+					{ merge: true }
+				);
 			updated++;
 		} else {
 			await collection.doc(docId).set({
 				...body,
 				expiredAt: '',
 				use: 'relevant',
+				useWhen: '',
+				audience: 'internal',
+				status: 'draft',
+				reviewEvery: DEFAULT_REVIEW_EVERY,
 				// Its top subfolder ("Legal", "Scoring"…) is a topic Claude can ask for.
 				topics: f.path.length ? [f.path[0].slice(0, 30)] : [],
 				createdAt: serverTimestamp()
@@ -394,25 +531,34 @@ export async function importFolder() {
 
 export const actions = {
 	/** Every entry, oldest first; the always-on block and the index of the relevant ones. */
-	list: async () => {
-		const entries = await list();
+	list: async (_p: any, auth: any) => {
+		const entries = (await list()).filter(visibleTo(isAdmin(auth)));
 		const today = todayIso();
 		const folder = await folderId();
 		return {
-			entries: entries.map((e) => ({ ...e, expired: isExpired(e, today) })),
+			entries: entries.map((e) => ({
+				...e,
+				rank: rankOf(e),
+				expired: isExpired(e, today),
+				reviewDue: reviewDue(e, today)
+			})),
 			active: formatKnowledge(entries),
 			relevant: relevantIndex(entries),
 			folder: { id: folder, url: `https://drive.google.com/drive/folders/${folder}` },
-			uses: USES
+			uses: USES,
+			types: TYPES,
+			audiences: AUDIENCES,
+			statuses: STATUSES,
+			reviewEvery: REVIEW_EVERY
 		};
 	},
 
 	/** The full text of chosen entries: by `ids`, or every entry with `topic`. */
-	get: async (p: any) => {
+	get: async (p: any, auth: any) => {
 		const ids = Array.isArray(p?.ids) ? p.ids.map(String).slice(0, 50) : [];
 		const topic = str(p?.topic, 'topic', false);
 		if (!ids.length && !topic) throw new HttpsError('invalid-argument', 'Give ids or a topic.');
-		return { text: pick(await list(), ids, topic) };
+		return { text: pick((await list()).filter(visibleTo(isAdmin(auth))), ids, topic) };
 	},
 
 	/**
@@ -424,10 +570,13 @@ export const actions = {
 		let entry = p?.entry ?? {};
 		const ref = id ? collection.doc(id) : null;
 		let imported = false;
+		let stored: (Knowledge & Record<string, any>) | undefined;
 		if (ref) {
 			// Editing: fields not sent keep their stored value (Claude may send only the one it changes).
-			const stored = (await ref.get()).data();
+			stored = (await ref.get()).data() as (Knowledge & Record<string, any>) | undefined;
 			if (!stored) throw new HttpsError('not-found', 'Entry not found.');
+			if (!visibleTo(isAdmin(auth))(stored))
+				throw new HttpsError('permission-denied', 'This entry is for admins only.');
 			imported = stored.source === 'drive';
 			const sent = Object.fromEntries(Object.entries(entry).filter(([, v]) => v !== undefined));
 			entry = {
@@ -440,17 +589,23 @@ export const actions = {
 				...(imported ? { label: stored.label, description: stored.description } : {})
 			};
 		}
+		const card = cleanCard(entry, stored, auth, cleanUse(entry).use);
+		if (card.audience === 'restricted' && !isAdmin(auth))
+			throw new HttpsError('permission-denied', 'Only admins can make an entry restricted.');
 		const meta = { updatedBy: who(auth), updatedAt: serverTimestamp() };
 		if (ref && imported) {
 			const expiredAt = str(entry.expiredAt, 'expiredAt', false);
 			if (expiredAt && !/^\d{4}-\d{2}-\d{2}$/.test(expiredAt))
 				throw new HttpsError('invalid-argument', 'Pick a valid expiry date.');
 			// The import's own stamp stays: a Hub edit here is not a change in Drive.
-			await ref.set({ ...cleanUse(entry), expiredAt, updatedAt: meta.updatedAt }, { merge: true });
-			logger.log(`updated use of ${id}`);
+			await ref.set(
+				{ ...cleanUse(entry), ...card, expiredAt, updatedAt: meta.updatedAt },
+				{ merge: true }
+			);
+			logger.log(`updated card of ${id}`);
 			return { id };
 		}
-		const body = { ...clean(entry), source: 'hub', ...meta };
+		const body = { ...clean(entry), ...card, source: 'hub', ...meta };
 		if (ref) {
 			await ref.set(body, { merge: true });
 			logger.log(`updated ${id}`);

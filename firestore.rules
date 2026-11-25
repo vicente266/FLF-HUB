@@ -27,9 +27,11 @@ service cloud.firestore {
     match /strategy/{id} {
       allow read: if team();
     }
-    // FLF facts and messaging (Knowledge); edited through core:knowledge.*.
+    // FLF facts and messaging (Knowledge); edited through core:knowledge.*. A restricted entry is
+    // for admins only (the Knowledge page queries by audience for everyone else).
     match /knowledge/{id} {
-      allow read: if team();
+      allow read: if request.auth != null && (request.auth.token.role == 'admin'
+        || (team() && resource.data.get('audience', 'internal') != 'restricted'));
     }
     // Meetings imported from the portal sheet's Events tab.
     match /event/{id} {

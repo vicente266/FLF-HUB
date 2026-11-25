@@ -68,3 +68,31 @@ entries are left out whatever their use.
   expiry change, and it can't be deleted there (remove the file, or set it to Off).
 - Reads: one Drive listing per folder per import plus one export per changed file; one Firestore query of the
   imported entries.
+
+## The card
+
+Every entry has a card, like the header of a file in the EBS knowledge repo. It is edited in the
+Hub (Knowledge → Edit), also for documents imported from Drive, whose text stays in Drive.
+
+| Field         | What it is                                                                                                                                                                                                                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `type`        | Policies, Decisions, Offer, Strategy, Procedures, Workflows, Brand, Glossary or Other (`TYPES` in `functions/src/lib/knowledge/config.ts`). An imported document takes it from its top subfolder in Drive (Legal → Policies, Scoring → Procedures…) until the team changes it. |
+| `useWhen`     | One sentence, "Use when …": Claude reads the entry when the task matches it. Shown in the index of "When relevant" entries.                                                                                                                                                    |
+| `audience`    | `external` (may be shared outside FLF), `internal` (the team; the default) or `restricted` (admins only: hidden from everyone else in the Hub, in Firestore and through Claude).                                                                                               |
+| `status`      | `draft` (new and imported entries) or `approved`. Only a person approves, on the Knowledge page; Claude can propose a card but not approve. Only an approved entry can be **Always**. An imported document whose text changes in Drive goes back to draft.                     |
+| `reviewEvery` | 3, 6 or 12 months. An approved entry past `lastReviewed` + `reviewEvery` shows **Review due**; **Mark reviewed** sets `lastReviewed` to today.                                                                                                                                 |
+
+## Precedence
+
+When two entries disagree, for Claude or any agent reading Knowledge:
+
+1. The **type** higher in this list wins: Policies, Decisions, Offer, Strategy, Procedures,
+   Workflows, Brand, Glossary, Other. Nothing may contradict a policy; a decision overrides the
+   documents of the types below it.
+2. At the same type, **approved** wins over draft. A draft is unconfirmed: Claude says so when it
+   relies on one.
+3. At the same type and status, the more recently **approved or reviewed** wins.
+
+Each entry Claude reads carries `rank` (1 = strongest: approved policy), `status` and `reviewed`,
+and the entries come in rank order. The Knowledge page groups entries by type in the same order.
+To change the order, change `TYPES` (and this list).
