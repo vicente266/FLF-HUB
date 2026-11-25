@@ -43,6 +43,8 @@ Route in `src/routes/(app)/<feature>/`, UI in `src/lib/components/<feature>/`, t
 - Dates only through `formatDate` / `formatDateTime` / `relative` from `$lib/utils`.
 - Design: FLF tokens in `src/app.css` (teal `primary`, `ink`, `line`, `canvas`, Manrope).
   One accent colour (primary); `focus:ring-focus` for focus. Desktop-only, no breakpoints.
+- Exception (owner's decision): Home and the CRM (`src/routes/(app)/+page.svelte`, `crm/**`,
+  `src/lib/components/crm/**`) also work on a phone, with `md:`/`lg:` used only in those files.
 
 ## Commands
 

@@ -255,17 +255,26 @@ export async function create(p: any, by: string, uid: string): Promise<string> {
 	const gtm: { segment?: string; strategyId?: string } =
 		type === 'partner' ? { segment: '', strategyId: '', ...gtmFields(p) } : {};
 	await checkStrategy(gtm.strategyId);
-	const stage = firstStage(type);
+	// Stage and owner are optional: the first stage, and no owner, unless the form picked them.
+	const stage = p.stage ? stageOf(type, str(p.stage, 'stage')) : stageOf(type, firstStage(type));
+	if (!stage) throw new HttpsError('invalid-argument', 'Invalid stage.');
+	const ownerUid = str(p.ownerUid, 'ownerUid', false) || null;
+	let ownerName: string | null = null;
+	if (ownerUid) {
+		const u = await db.collection('user').doc(ownerUid).get();
+		if (!u.exists) throw new HttpsError('not-found', 'User not found.');
+		ownerName = u.data()?.name || u.data()?.email;
+	}
 	const ref = contacts.doc();
 	await ref.set({
 		type,
 		source,
 		...f,
 		...gtm,
-		stage,
-		open: true,
-		ownerUid: null,
-		ownerName: null,
+		stage: stage.id,
+		open: !stage.final,
+		ownerUid,
+		ownerName,
 		needsAttention: false,
 		stageChangedAt: serverTimestamp(),
 		lastActivityAt: serverTimestamp(),
@@ -490,6 +499,45 @@ export const actions = {
 			source: callVia() === 'claude' ? 'claude' : 'manual',
 			createdAt: serverTimestamp()
 		});
+		return { ok: true };
+	},
+
+	'task.update': async (p: any) => {
+		const ref = tasks.doc(str(p.id, 'id'));
+		const t = (await ref.get()).data();
+		if (!t) throw new HttpsError('not-found', 'Task not found.');
+		// The portal sheet rewrites a portal task's title and date at every sync; its assignee sticks.
+		if (t.source === 'portal' && (p.title !== undefined || p.dueAt !== undefined))
+			throw new HttpsError(
+				'failed-precondition',
+				'This task comes from the portal sheet: change its title and date there. You can change who it is for here.'
+			);
+		// Only the fields sent change (Claude's flf_update_task may send just one).
+		const out: Record<string, unknown> = {};
+		if (p.title !== undefined) out.title = str(p.title, 'title');
+		// '' clears the date.
+		if (p.dueAt !== undefined) out.dueAt = str(p.dueAt, 'dueAt', false) ? endOfDay(p.dueAt) : null;
+		if (p.assigneeUid !== undefined) {
+			const uid = str(p.assigneeUid, 'assigneeUid', false) || null;
+			if (uid && !(await db.collection('user').doc(uid).get()).exists)
+				throw new HttpsError('not-found', 'User not found.');
+			out.assigneeUid = uid;
+		}
+		if (Object.keys(out).length) await ref.update(out);
+		return { ok: true };
+	},
+
+	'task.delete': async (p: any) => {
+		const ref = tasks.doc(str(p.id, 'id'));
+		const t = (await ref.get()).data();
+		if (!t) throw new HttpsError('not-found', 'Task not found.');
+		// The sheet would bring it back at the next sync.
+		if (t.source === 'portal')
+			throw new HttpsError(
+				'failed-precondition',
+				'This task comes from the portal sheet: remove the row there, or tick it done here.'
+			);
+		await ref.delete();
 		return { ok: true };
 	},
 

@@ -39,9 +39,13 @@
 	let command = $derived(url ? `claude mcp add --transport http --scope user flf-hub ${url}` : '');
 
 	async function copy(label: string, text: string) {
-		await navigator.clipboard.writeText(text);
-		copied = label;
-		setTimeout(() => (copied = null), 1500);
+		try {
+			await navigator.clipboard.writeText(text);
+			copied = label;
+			setTimeout(() => (copied = null), 1500);
+		} catch {
+			error = 'Couldn’t copy. Select the text and copy it by hand.';
+		}
 	}
 
 	async function end(target: 'core:claude.disconnect' | 'core:claude.admin.revoke', id: string) {
@@ -59,7 +63,9 @@
 		'Add Marta Ruiz (marta@stackr.io, Stackr) as a Fellow target from a referral and note our call.',
 		'Move Marta Ruiz to Teaser received and give me a task to follow up on Friday.',
 		'Which Investors have we not touched in two weeks?',
-		'Is every connection working? Import the Knowledge folder now.'
+		'Is every connection working? Import the Knowledge folder now.',
+		'Send this Drive video to FLF TV',
+		'What does Knowledge say about the Pledge?'
 	];
 </script>
 
@@ -70,13 +76,26 @@
 		<p class="eyebrow">Claude connector</p>
 		<h2 class="mt-1 text-lg font-bold">Everything in the Hub, from Claude</h2>
 		<p class="mt-1 text-sm text-ink-soft">
-			Ask Claude about contacts, tasks, reports, automations and connections, and have it make the
-			changes. It acts as you, with exactly your permissions, and every change shows in the Hub
-			marked <strong>via Claude</strong>. Claude asks you before each change.
+			Ask Claude about contacts, tasks, reports, automations, connections, FLF TV and Knowledge, and
+			have it make the changes. It acts as you, with exactly your permissions, and every change
+			shows in the Hub marked <strong>via Claude</strong>. Claude asks you before each change.
 		</p>
-		<ul class="mt-3 grid grid-cols-2 gap-2 text-sm">
-			{#each EXAMPLES as ex (ex)}
-				<li class="rounded-lg bg-canvas px-3 py-2 text-ink-soft">“{ex}”</li>
+		<p class="mt-3 text-xs text-ink-soft">Try one (click to copy):</p>
+		<ul class="mt-1 grid grid-cols-2 gap-2 text-sm">
+			{#each EXAMPLES as ex, i (ex)}
+				<li>
+					<button
+						class="flex w-full items-center gap-2 rounded-lg bg-canvas px-3 py-2 text-left text-ink-soft hover:bg-primary-50 hover:text-ink focus:ring-2 focus:ring-focus focus:outline-none"
+						title="Copy"
+						onclick={() => copy(`ex${i}`, ex)}
+					>
+						<span class="min-w-0 flex-1">“{ex}”</span>
+						{#if copied === `ex${i}`}<Check
+								class="h-4 w-4 shrink-0 text-primary-600"
+								aria-label="Copied"
+							/>{:else}<Copy class="h-4 w-4 shrink-0 opacity-50" />{/if}
+					</button>
+				</li>
 			{/each}
 		</ul>
 	</section>

@@ -1,25 +1,51 @@
 <script lang="ts">
 	import { collection, query, where, orderBy, limit } from 'firebase/firestore';
+	import { tick } from 'svelte';
+	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
+	import Pencil from '@lucide/svelte/icons/pencil';
 	import { db } from '$lib/firebase';
-	import { callAction, errorText } from '$lib/actions';
 	import { me } from '$lib/stores';
 	import { hasPermission, listen, setTitle, formatDate, toDate } from '$lib/utils';
-	import type { Task } from '$lib/types/crm';
+	import { tickTask } from '$lib/helpers/crmConfig.svelte';
+	import type { Task, TeamUser } from '$lib/types/crm';
 	import FormError from '$lib/components/shared/FormError.svelte';
 	import Empty from '$lib/components/shared/Empty.svelte';
+	import TaskDialog from '$lib/components/crm/TaskDialog.svelte';
 
 	setTitle('Tasks', 'Follow-ups from you and from the automations');
 
 	const canWrite = hasPermission('crm.any.write');
 	const SOURCE: Record<string, string> = {
-		automation: 'Automation',
+		automation: 'Auto-created',
 		claude: 'Via Claude',
 		portal: 'Portal',
 		manual: 'Manual'
 	};
-	let scope = $state<'mine' | 'all'>('mine');
+	// ?scope=all opens Everyone (Home links here); #overdue scrolls to the Overdue group.
+	let scope = $state<'mine' | 'all'>(page.url.searchParams.get('scope') === 'all' ? 'all' : 'mine');
 	let tasks = $state<Task[]>([]);
+	let loaded = $state(false);
 	let error = $state<string | null>(null);
+	function setScope(value: 'mine' | 'all') {
+		scope = value;
+		goto(`/tasks?scope=${value}`, { replaceState: true, keepFocus: true, noScroll: true });
+	}
+
+	// Names for "Everyone" and the edit dialog's "For".
+	let team = $state<TeamUser[]>([]);
+	$effect(() =>
+		listen<TeamUser>(
+			query(collection(db, 'user'), where('role', 'in', ['user', 'admin']), limit(200)),
+			(rows) => (team = rows)
+		)
+	);
+	const nameOf = (uid: string | null) => {
+		const u = uid ? team.find((x) => x.id === uid) : null;
+		return u ? u.name || u.email : null;
+	};
+	let editing = $state<Task | null>(null);
+	let editOpen = $state(false);
 
 	$effect(() => {
 		const base = collection(db, 'task');
@@ -33,7 +59,18 @@
 						limit(200)
 					)
 				: query(base, where('done', '==', false), orderBy('dueAt'), limit(200));
-		return listen<Task>(q, (rows) => (tasks = rows));
+		return listen<Task>(q, (rows) => {
+			tasks = rows;
+			loaded = true;
+		});
+	});
+
+	// Once the list is in, scroll to the group the link named.
+	let scrolled = false;
+	$effect(() => {
+		if (!loaded || scrolled || !page.url.hash) return;
+		scrolled = true;
+		tick().then(() => document.getElementById(page.url.hash.slice(1))?.scrollIntoView());
 	});
 
 	// No due date: its own group, never Overdue.
@@ -73,12 +110,7 @@
 	]);
 
 	async function done(id: string, box: HTMLInputElement) {
-		try {
-			await callAction('crm:task.done', { id, done: true });
-		} catch (e) {
-			error = errorText(e);
-			box.checked = false;
-		}
+		error = await tickTask(id, box);
 	}
 </script>
 
@@ -89,7 +121,7 @@
 				class="rounded-md px-3 py-1 text-sm font-semibold {scope === value
 					? 'bg-primary-600 text-white'
 					: 'text-ink-soft'}"
-				onclick={() => (scope = value as 'mine' | 'all')}
+				onclick={() => setScope(value as 'mine' | 'all')}
 			>
 				{label}
 			</button>
@@ -97,7 +129,7 @@
 	</div>
 	<FormError message={error} />
 
-	{#if tasks.length === 0}
+	{#if loaded && tasks.length === 0}
 		<Empty title="No open tasks">
 			Automations create follow-ups as contacts move through the pipeline. You can also add one from
 			any contact's page.
@@ -106,7 +138,7 @@
 
 	{#each groups as g (g.label)}
 		{#if g.rows.length}
-			<section class="card">
+			<section class="scroll-mt-4 card" id={g.label.toLowerCase().replaceAll(' ', '-')}>
 				<div
 					class="border-b border-line/60 px-4 py-2 text-xs font-bold tracking-wide uppercase {g.tone}"
 				>
@@ -132,12 +164,30 @@
 									<span class="text-xs text-ink-soft">{t.ownerName} · from the portal</span>
 								{/if}
 							</div>
-							<span class="text-xs text-ink-soft">
-								{SOURCE[t.source] ?? 'Manual'}{t.assigneeUid ? '' : ' · Unassigned'}
+							<span class="text-right text-xs text-ink-soft">
+								{#if scope === 'all'}
+									<span class="font-semibold text-ink">
+										{nameOf(t.assigneeUid) ?? 'Unassigned'}
+									</span><br />
+								{/if}
+								{SOURCE[t.source] ?? 'Manual'}
 							</span>
 							<span class="w-24 text-right text-xs font-semibold {g.tone}">
 								{formatDate(t.dueAt)}
 							</span>
+							{#if canWrite}
+								<button
+									class="p-1 text-ink-soft hover:text-ink"
+									aria-label="Edit task"
+									title="Edit task"
+									onclick={() => {
+										editing = t;
+										editOpen = true;
+									}}
+								>
+									<Pencil class="h-3.5 w-3.5" />
+								</button>
+							{/if}
 						</li>
 					{/each}
 				</ul>
@@ -145,3 +195,5 @@
 		{/if}
 	{/each}
 </div>
+
+<TaskDialog bind:open={editOpen} task={editing} {team} />

@@ -20,6 +20,11 @@
 	let info = $state<string | null>(null);
 	let busy = $state(false);
 
+	/** Firebase Auth error code, e.g. `auth/network-request-failed`. */
+	const codeOf = (e: unknown) =>
+		e && typeof e === 'object' && 'code' in e ? String((e as { code: unknown }).code) : '';
+	const NETWORK = "Couldn't reach the sign-in service. Check your connection and try again.";
+
 	/** Where to go after signing in: a path on this site only, never another origin. */
 	function target(): string {
 		const next = new URLSearchParams(location.search).get('next') ?? '/';
@@ -42,8 +47,8 @@
 		try {
 			await signInWithEmailAndPassword(auth, email.trim(), password);
 			goto(target());
-		} catch {
-			error = 'Wrong email or password.';
+		} catch (e) {
+			error = codeOf(e) === 'auth/network-request-failed' ? NETWORK : 'Wrong email or password.';
 		} finally {
 			busy = false;
 		}
@@ -54,8 +59,14 @@
 		try {
 			await signInWithPopup(auth, new GoogleAuthProvider());
 			goto(target());
-		} catch {
-			error = 'Google sign-in failed. Please try again.';
+		} catch (e) {
+			const code = codeOf(e);
+			// Closing the popup (or opening a second one) is the person's choice, not an error.
+			if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return;
+			error =
+				code === 'auth/network-request-failed'
+					? NETWORK
+					: 'Google sign-in failed. Please try again.';
 		}
 	}
 
@@ -93,7 +104,7 @@
 		<div class="flex flex-col items-center text-center">
 			<Logo size="lg" />
 			<p class="mt-5 eyebrow">Founders for Life Fellowship</p>
-			<h1 class="mt-2 text-2xl font-bold">Fellowship Hub</h1>
+			<h1 class="mt-2 text-2xl font-bold">FLF Hub</h1>
 			<p class="mt-1 text-sm text-ink-soft">Sign in to continue.</p>
 		</div>
 

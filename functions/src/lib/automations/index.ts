@@ -4,6 +4,7 @@ import { serverTimestamp, increment, str, createLogger, Timestamp } from '../uti
 import * as crm from '../crm/index';
 import { MEETING_STAGES, nextStepOf, stageOf, STALE_DAYS, type ContactType } from '../crm/config';
 import { AUTOMATIONS, N8N_AUTOMATIONS, automation } from './config';
+import { CONNECTORS } from '../connections/config';
 
 const logger = createLogger('automations');
 export const collection = db.collection('automation');
@@ -233,7 +234,12 @@ export async function portalSync() {
 }
 
 export const actions = {
-	'config.get': async () => ({ automations: AUTOMATIONS, n8n: N8N_AUTOMATIONS }),
+	'config.get': async () => ({
+		automations: AUTOMATIONS,
+		n8n: N8N_AUTOMATIONS,
+		// The names of the connections they use, for "Uses: …".
+		connections: CONNECTORS.map((c) => ({ id: c.id, name: c.name }))
+	}),
 
 	toggle: async (p: any) => {
 		const id = str(p.id, 'id');

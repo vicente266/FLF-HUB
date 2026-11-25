@@ -1,48 +1,87 @@
 <script lang="ts">
 	import { collection, query, where, orderBy, limit } from 'firebase/firestore';
+	import { untrack } from 'svelte';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import Plus from '@lucide/svelte/icons/plus';
 	import Search from '@lucide/svelte/icons/search';
 	import Columns3 from '@lucide/svelte/icons/columns-3';
 	import List from '@lucide/svelte/icons/list';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import FellowProfile from '$lib/components/crm/FellowProfile.svelte';
+	import NewContactDialog from '$lib/components/crm/NewContactDialog.svelte';
+	import ReasonDialog from '$lib/components/crm/ReasonDialog.svelte';
 	import { db } from '$lib/firebase';
 	import { callAction, errorText } from '$lib/actions';
 	import { me } from '$lib/stores';
-	import { hasPermission, listen, setTitle, relative } from '$lib/utils';
+	import { hasPermission, listen, setTitle, relative, formatDate } from '$lib/utils';
 	import {
 		askReason,
+		attentionDays,
 		contactSubtitle,
 		contactTitle,
+		crmBack,
 		crmConfig,
+		daysQuiet,
+		initials,
+		sourceLabel,
 		stageLabel
 	} from '$lib/helpers/crmConfig.svelte';
-	import type { Contact, ContactDraft, ContactType } from '$lib/types/crm';
-	import Modal from '$lib/components/shared/Modal.svelte';
+	import type { Contact, ContactType } from '$lib/types/crm';
 	import FormError from '$lib/components/shared/FormError.svelte';
-	import ContactForm from '$lib/components/crm/ContactForm.svelte';
+	import Empty from '$lib/components/shared/Empty.svelte';
 
 	setTitle('CRM', 'Fellows, Gurus, Investors and Partners');
 
 	const cfg = crmConfig();
 	const canWrite = hasPermission('crm.any.write');
 
-	let type = $state<ContactType>('');
-	// The first contact type the backend defines, once its config arrives.
+	// Tab, view and filters live in the URL (?type=investor&view=list&attention=1&owner=me), so a
+	// link or the contact page's back link opens the same list. A phone opens in list view.
+	const params = page.url.searchParams;
+	let type = $state<ContactType>(params.get('type') ?? '');
+	let view = $state<'board' | 'list'>(
+		params.get('view') === 'list' ||
+			(!params.get('view') && typeof window !== 'undefined' && window.innerWidth < 768)
+			? 'list'
+			: 'board'
+	);
+	let search = $state(params.get('q') ?? '');
+	let mine = $state(params.get('owner') === 'me');
+	let attentionOnly = $state(params.get('attention') === '1');
+
+	// The first contact type the backend defines, once its config arrives (or an unknown one in
+	// the URL).
 	$effect(() => {
-		if (!type && cfg.value) type = cfg.value.types[0];
+		if (cfg.value && !cfg.value.types.includes(type)) type = cfg.value.types[0];
 	});
-	let view = $state<'board' | 'list'>('board');
-	let search = $state('');
-	let mine = $state(false);
-	let attentionOnly = $state(false);
+
+	$effect(() => {
+		if (!type) return;
+		const q: [string, string][] = [
+			['type', type],
+			['view', view]
+		];
+		if (attentionOnly) q.push(['attention', '1']);
+		if (mine) q.push(['owner', 'me']);
+		if (search.trim()) q.push(['q', search.trim()]);
+		const href = `/crm?${q.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')}`;
+		crmBack.href = href;
+		untrack(() => {
+			if (page.url.pathname === '/crm' && `${page.url.pathname}${page.url.search}` !== href)
+				goto(href, { replaceState: true, keepFocus: true, noScroll: true });
+		});
+	});
+
 	let contacts = $state<Contact[]>([]);
+	let loaded = $state(false);
 
 	// One bounded listener for the selected type.
 	$effect(() => {
 		const t = type;
 		if (!t) return;
+		loaded = false;
 		return listen<Contact>(
 			query(
 				collection(db, 'contact'),
@@ -50,14 +89,20 @@
 				orderBy('createdAt', 'desc'),
 				limit(500)
 			),
-			(rows) => (contacts = rows)
+			(rows) => {
+				contacts = rows;
+				loaded = true;
+			}
 		);
 	});
 
+	let staleDays = $derived(cfg.value?.staleDays ?? 14);
+	const attention = (c: Contact) => attentionDays(c, staleDays);
+	let filtering = $derived(mine || attentionOnly || !!search.trim());
 	let filtered = $derived(
 		contacts.filter((c) => {
 			if (mine && c.ownerUid !== $me?.uid) return false;
-			if (attentionOnly && !c.needsAttention) return false;
+			if (attentionOnly && attention(c) === null) return false;
 			const q = search.trim().toLowerCase();
 			if (!q) return true;
 			return [c.name, c.email, c.company, ...(c.tags ?? [])].some((v) =>
@@ -68,6 +113,20 @@
 
 	let stages = $derived(cfg.value?.pipelines[type]?.stages ?? []);
 
+	// Losing columns (Lost, Declined) start folded, so the working stages fit the screen.
+	let expanded = $state<Record<string, boolean>>({});
+	const folded = (s: { id: string; askReason?: boolean }) =>
+		!!s.askReason && !expanded[`${type}:${s.id}`];
+
+	/** Card date colour: warning after 30 days without activity, danger after 90. */
+	function ageTone(c: Contact) {
+		const d = daysQuiet(c);
+		if (d === null) return 'text-ink-soft';
+		if (d >= 90) return 'text-danger font-semibold';
+		if (d >= 30) return 'text-warning font-semibold';
+		return 'text-ink-soft';
+	}
+
 	// Drag a card to another column to move it.
 	let dragging = $state<string | null>(null);
 	let moveError = $state<string | null>(null);
@@ -76,7 +135,7 @@
 		dragging = null;
 		const c = contacts.find((x) => x.id === id);
 		if (!id || !c || c.stage === stage || !canWrite) return;
-		const reason = askReason(
+		const reason = await askReason(
 			stages.find((s) => s.id === stage),
 			contactTitle(c)
 		);
@@ -93,24 +152,7 @@
 		}
 	}
 
-	// New contact
 	let creating = $state(false);
-	let saving = $state(false);
-	let formError = $state<string | null>(null);
-	const blank = (): ContactDraft => ({
-		type,
-		name: '',
-		email: '',
-		phone: '',
-		company: '',
-		linkedin: '',
-		source: 'manual',
-		tags: '',
-		notes: '',
-		segment: '',
-		strategyId: ''
-	});
-	let draft = $state<ContactDraft>(blank());
 	// The Fellow whose profile pop-up is open (null = closed).
 	let profileOf = $state<Contact | null>(null);
 	let profileOpen = $state(false);
@@ -118,36 +160,14 @@
 		profileOf = c;
 		profileOpen = true;
 	}
-
-	function openNew() {
-		draft = blank();
-		formError = null;
-		creating = true;
-	}
-
-	async function create() {
-		saving = true;
-		formError = null;
-		try {
-			const res = await callAction<{ id: string }>('crm:contact.create', {
-				...draft,
-				tags: draft.tags.split(',')
-			});
-			creating = false;
-			goto(`/crm/${res.id}`);
-		} catch (e) {
-			formError = errorText(e);
-		} finally {
-			saving = false;
-		}
-	}
 </script>
 
 {#if cfg.value}
 	{@const config = cfg.value}
+	{@const pipeline = config.pipelines[type]}
 	<div class="space-y-4">
-		<div class="flex items-center justify-between gap-3">
-			<div class="flex rounded-lg border border-line/70 bg-white p-0.5">
+		<div class="flex flex-wrap items-center justify-between gap-2">
+			<div class="flex flex-wrap rounded-lg border border-line/70 bg-white p-0.5">
 				{#each config.types as t (t)}
 					<button
 						class="rounded-md px-3 py-1 text-sm font-semibold {type === t
@@ -160,19 +180,23 @@
 				{/each}
 			</div>
 
-			<div class="flex min-w-0 items-center gap-2">
-				<div class="relative">
+			<div class="flex min-w-0 grow flex-wrap items-center justify-start gap-2 md:justify-end">
+				<div class="relative max-w-60 min-w-32 flex-1">
 					<Search class="pointer-events-none absolute top-2 left-2.5 h-4 w-4 text-ink-soft/60" />
 					<input
-						class="input w-60 pl-8"
-						placeholder="Search name, email, company, tag"
+						class="input w-full pl-8"
+						placeholder="Search"
+						aria-label="Search name, email, company or tag"
 						bind:value={search}
 					/>
 				</div>
 				<label class="flex items-center gap-1.5 text-sm whitespace-nowrap">
 					<input type="checkbox" class="rounded text-primary-600" bind:checked={mine} /> Mine
 				</label>
-				<label class="flex items-center gap-1.5 text-sm whitespace-nowrap">
+				<label
+					class="flex items-center gap-1.5 text-sm whitespace-nowrap"
+					title="Open, with no activity for {staleDays} days"
+				>
 					<input type="checkbox" class="rounded text-primary-600" bind:checked={attentionOnly} /> Needs
 					attention
 				</label>
@@ -182,6 +206,7 @@
 							? 'bg-primary-50 text-primary-700'
 							: 'text-ink-soft'}"
 						title="Board"
+						aria-label="Board"
 						onclick={() => (view = 'board')}
 					>
 						<Columns3 class="h-4 w-4" />
@@ -191,13 +216,14 @@
 							? 'bg-primary-50 text-primary-700'
 							: 'text-ink-soft'}"
 						title="List"
+						aria-label="List"
 						onclick={() => (view = 'list')}
 					>
 						<List class="h-4 w-4" />
 					</button>
 				</div>
 				{#if canWrite}
-					<button class="btn-primary" onclick={openNew}>
+					<button class="btn-primary whitespace-nowrap" onclick={() => (creating = true)}>
 						<Plus class="h-4 w-4" /> New contact
 					</button>
 				{/if}
@@ -206,49 +232,109 @@
 
 		<FormError message={moveError} />
 
-		{#if view === 'board'}
-			<div class="flex gap-3 overflow-x-auto pb-4">
+		{#if loaded && contacts.length === 0}
+			<Empty title="Add your first {pipeline.label.toLowerCase()}">
+				<p>{pipeline.description}</p>
+				{#if canWrite}
+					<button class="mt-3 btn-primary" onclick={() => (creating = true)}>
+						<Plus class="h-4 w-4" /> New contact
+					</button>
+				{/if}
+			</Empty>
+		{:else if view === 'board'}
+			<!-- Only the board scrolls sideways, inside itself. -->
+			<div class="flex gap-2 overflow-x-auto pb-4">
 				{#each stages as stage (stage.id)}
 					{@const cards = filtered.filter((c) => c.stage === stage.id)}
-					<div
-						class="flex min-w-44 flex-1 flex-col rounded-xl bg-primary-50/60 {stage.final
-							? 'opacity-80'
-							: ''}"
-						role="list"
-						ondragover={(e) => e.preventDefault()}
-						ondrop={() => drop(stage.id)}
-					>
-						<div class="flex items-center justify-between px-3 py-2">
-							<span class="text-xs font-bold tracking-wide text-ink-soft uppercase">
+					{#if folded(stage)}
+						<button
+							class="flex w-10 shrink-0 flex-col items-center gap-2 rounded-xl bg-primary-50/60 py-2 text-ink-soft hover:bg-primary-50"
+							title="Show {stage.label}"
+							ondragover={(e) => e.preventDefault()}
+							ondrop={() => drop(stage.id)}
+							onclick={() => (expanded[`${type}:${stage.id}`] = true)}
+						>
+							<ChevronRight class="h-4 w-4" />
+							<span class="rounded-full bg-white px-1.5 text-[11px] font-semibold">
+								{cards.length}
+							</span>
+							<span class="text-xs font-bold tracking-wide uppercase [writing-mode:vertical-rl]">
 								{stage.label}
 							</span>
-							<span class="text-xs font-semibold text-ink-soft">{cards.length}</span>
+						</button>
+					{:else}
+						<div
+							class="flex w-48 shrink-0 flex-col rounded-xl bg-primary-50/60 lg:w-auto lg:min-w-40 lg:flex-1 {stage.final
+								? 'opacity-80'
+								: ''}"
+							role="list"
+							ondragover={(e) => e.preventDefault()}
+							ondrop={() => drop(stage.id)}
+						>
+							<div class="flex items-start justify-between gap-2 px-3 py-2">
+								<span class="text-xs leading-tight font-bold tracking-wide text-ink-soft uppercase">
+									{stage.label}
+								</span>
+								<span class="flex shrink-0 items-center gap-1">
+									<span
+										class="rounded-full bg-white px-1.5 text-[11px] font-semibold text-ink-soft"
+									>
+										{cards.length}
+									</span>
+									{#if stage.askReason}
+										<button
+											class="text-[11px] text-ink-soft hover:text-ink"
+											title="Fold {stage.label}"
+											onclick={() => (expanded[`${type}:${stage.id}`] = false)}
+										>
+											Hide
+										</button>
+									{/if}
+								</span>
+							</div>
+							<div class="flex min-h-24 flex-col gap-2 px-2 pb-2">
+								{#each cards as c (c.id)}
+									{@const quiet = attention(c)}
+									<a
+										href="/crm/{c.id}"
+										draggable={canWrite}
+										ondragstart={() => (dragging = c.id)}
+										class="block card px-3 py-2 hover:border-primary-300"
+									>
+										<div class="flex items-start justify-between gap-2">
+											<span class="min-w-0 text-sm font-semibold break-words">
+												{contactTitle(c)}
+											</span>
+											{#if quiet !== null}<span title="{quiet} days without activity">
+													<TriangleAlert class="h-3.5 w-3.5 shrink-0 text-warning" />
+												</span>{/if}
+										</div>
+										{#if contactSubtitle(c)}<div class="truncate text-xs text-ink-soft">
+												{contactSubtitle(c)}
+											</div>{/if}
+										<div class="mt-2 flex items-center justify-between gap-3 text-[11px]">
+											{#if c.ownerName}
+												<span
+													class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary-100 text-[10px] font-bold text-primary-700"
+													title={c.ownerName}
+												>
+													{initials(c.ownerName)}
+												</span>
+											{:else}
+												<span class="text-ink-soft">No owner</span>
+											{/if}
+											<span
+												class="shrink-0 {ageTone(c)}"
+												title="Last activity {formatDate(c.lastActivityAt)}"
+											>
+												{relative(c.lastActivityAt)}
+											</span>
+										</div>
+									</a>
+								{/each}
+							</div>
 						</div>
-						<div class="flex min-h-24 flex-col gap-2 px-2 pb-2">
-							{#each cards as c (c.id)}
-								<a
-									href="/crm/{c.id}"
-									draggable={canWrite}
-									ondragstart={() => (dragging = c.id)}
-									class="block card px-3 py-2 hover:border-primary-300"
-								>
-									<div class="flex items-start justify-between gap-2">
-										<span class="text-sm font-semibold">{contactTitle(c)}</span>
-										{#if c.needsAttention}<TriangleAlert
-												class="h-3.5 w-3.5 shrink-0 text-warning"
-											/>{/if}
-									</div>
-									{#if contactSubtitle(c)}<div class="truncate text-xs text-ink-soft">
-											{contactSubtitle(c)}
-										</div>{/if}
-									<div class="mt-1.5 flex items-center justify-between text-[11px] text-ink-soft">
-										<span class="truncate">{c.ownerName ?? 'No owner'}</span>
-										<span class="shrink-0">{relative(c.lastActivityAt)}</span>
-									</div>
-								</a>
-							{/each}
-						</div>
-					</div>
+					{/if}
 				{/each}
 			</div>
 		{:else}
@@ -259,23 +345,24 @@
 							<th class="px-4 py-2 font-semibold">
 								{type === 'partner' ? 'Organisation' : 'Name'}
 							</th>
-							<th class="px-4 py-2 font-semibold">
+							<th class="hidden px-4 py-2 font-semibold md:table-cell">
 								{type === 'partner' ? 'Main contact' : 'Company'}
 							</th>
 							<th class="px-4 py-2 font-semibold">Stage</th>
-							<th class="px-4 py-2 font-semibold">Owner</th>
-							<th class="px-4 py-2 font-semibold">Source</th>
-							<th class="px-4 py-2 font-semibold">Last activity</th>
+							<th class="hidden px-4 py-2 font-semibold md:table-cell">Owner</th>
+							<th class="hidden px-4 py-2 font-semibold lg:table-cell">Source</th>
+							<th class="hidden px-4 py-2 font-semibold md:table-cell">Last activity</th>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-line/40">
 						{#each filtered as c (c.id)}
+							{@const quiet = attention(c)}
 							<tr class="hover:bg-canvas">
 								<td class="px-4 py-2">
-									<a href="/crm/{c.id}" class="font-semibold hover:text-primary-700">
+									<a href="/crm/{c.id}" class="font-semibold break-words hover:text-primary-700">
 										{contactTitle(c)}
 									</a>
-									<div class="text-xs text-ink-soft">
+									<div class="text-xs break-all text-ink-soft">
 										{c.email}
 										{#if c.type === 'fellow'}<button
 												class="ml-1 text-primary-700 hover:underline"
@@ -285,21 +372,23 @@
 											</button>{/if}
 									</div>
 								</td>
-								<td class="px-4 py-2">{contactSubtitle(c) || '—'}</td>
+								<td class="hidden px-4 py-2 md:table-cell">{contactSubtitle(c) || '—'}</td>
 								<td class="px-4 py-2">{stageLabel(config, c.type, c.stage)}</td>
-								<td class="px-4 py-2">{c.ownerName ?? '—'}</td>
-								<td class="px-4 py-2 capitalize">{c.source}</td>
-								<td class="px-4 py-2 whitespace-nowrap">
-									{relative(c.lastActivityAt)}
-									{#if c.needsAttention}<TriangleAlert
-											class="ml-1 inline h-3.5 w-3.5 text-warning"
-										/>{/if}
+								<td class="hidden px-4 py-2 md:table-cell">{c.ownerName ?? '—'}</td>
+								<td class="hidden px-4 py-2 lg:table-cell">{sourceLabel(c.source)}</td>
+								<td class="hidden px-4 py-2 whitespace-nowrap md:table-cell">
+									<span class={ageTone(c)} title="Last activity {formatDate(c.lastActivityAt)}">
+										{relative(c.lastActivityAt)}
+									</span>
+									{#if quiet !== null}<span title="{quiet} days without activity">
+											<TriangleAlert class="ml-1 inline h-3.5 w-3.5 text-warning" />
+										</span>{/if}
 								</td>
 							</tr>
 						{:else}
 							<tr>
 								<td colspan="6" class="px-4 py-8 text-center text-ink-soft">
-									No contacts match your search or filters.
+									{filtering ? 'No contacts match your search or filters.' : 'No contacts yet.'}
 								</td>
 							</tr>
 						{/each}
@@ -309,24 +398,10 @@
 		{/if}
 	</div>
 
-	<Modal bind:open={creating} title="New contact">
-		<div class="space-y-3">
-			<FormError message={formError} />
-			<ContactForm bind:draft {config} creating />
-		</div>
-		{#snippet footer()}
-			<button class="btn-ghost" onclick={() => (creating = false)}>Cancel</button>
-			<button
-				class="btn-primary"
-				onclick={create}
-				disabled={saving || !(draft.type === 'partner' ? draft.company.trim() : draft.name.trim())}
-			>
-				Create contact
-			</button>
-		{/snippet}
-	</Modal>
+	{#if canWrite}<NewContactDialog bind:open={creating} {config} {type} />{/if}
 {:else}
 	<p class="text-sm text-ink-soft">Loading…</p>
 {/if}
 
+<ReasonDialog />
 {#if profileOf}<FellowProfile bind:open={profileOpen} contact={profileOf} />{/if}

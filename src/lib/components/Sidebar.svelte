@@ -22,8 +22,8 @@
 <a href="/" class="flex items-center gap-2.5 px-2 pt-4 pb-2">
 	<Logo />
 	<div class="leading-tight">
-		<div class="text-sm font-semibold text-ink">Founders for Life</div>
-		<div class="text-[9px] font-bold tracking-[0.18em] text-primary-600">FELLOWSHIP HUB</div>
+		<div class="text-sm font-bold text-ink">FLF Hub</div>
+		<div class="text-[10px] font-semibold text-primary-600">Founders for Life Fellowship</div>
 	</div>
 </a>
 

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { beforeNavigate } from '$app/navigation';
 	import { collection, query, orderBy, limit, where } from 'firebase/firestore';
 	import Upload from '@lucide/svelte/icons/upload';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
@@ -8,11 +9,12 @@
 	import Check from '@lucide/svelte/icons/check';
 	import { db } from '$lib/firebase';
 	import { callAction, errorText } from '$lib/actions';
-	import { hasPermission, listen, setTitle, relative } from '$lib/utils';
+	import { hasPermission, listen, setTitle, relative, formatDateTime, toDate } from '$lib/utils';
 	import type { TvBrand, TvClip, TvSkill, TvVideo } from '$lib/types/tv';
 	import ClipCard from '$lib/components/tv/ClipCard.svelte';
 	import FormError from '$lib/components/shared/FormError.svelte';
 	import Empty from '$lib/components/shared/Empty.svelte';
+	import Modal from '$lib/components/shared/Modal.svelte';
 
 	setTitle(
 		'FLF TV',
@@ -28,12 +30,13 @@
 	let tab = $state<'upload' | 'skill' | 'outcome'>('upload');
 	let error = $state<string | null>(null);
 
-	// ---- videos, the selected one, its clips
-	let videos = $state<TvVideo[]>([]);
+	// ---- videos, the selected one, its clips. `updatedAt` is the worker's heartbeat.
+	type Video = TvVideo & { updatedAt?: unknown };
+	let videos = $state<Video[]>([]);
 	let selected = $state<string | null>(null);
 	let clips = $state<TvClip[]>([]);
 	$effect(() =>
-		listen<TvVideo>(
+		listen<Video>(
 			query(collection(db, 'tvVideo'), orderBy('createdAt', 'desc'), limit(100)),
 			(rows) => {
 				videos = rows;
@@ -70,19 +73,86 @@
 			sending = false;
 		}
 	}
-	async function videoAct(target: 'core:tv.video.retry' | 'core:tv.video.delete', id: string) {
-		if (
-			target === 'core:tv.video.delete' &&
-			!confirm('Delete this video and its clips from FLF TV? The Drive files stay.')
-		)
-			return;
-		error = null;
+
+	// ---- The Mac's heartbeat: a clock for "N min ago", and when a job counts as abandoned.
+	let now = $state(Date.now());
+	onMount(() => {
+		const t = setInterval(() => (now = Date.now()), 30_000);
+		return () => clearInterval(t);
+	});
+	/** Past this the backend lets people run a held job again or delete it (`STALE_MS`). */
+	let staleMs = $state<{ video: number; clip: number } | null>(null);
+	const ms = (v: unknown) => toDate(v)?.getTime() ?? null;
+	/** "5 minutes ago", re-read every 30 s. */
+	const ago = (v: unknown) => (now ? relative(v) : '');
+	/** A live worker bumps `updatedAt` every 5 minutes: quiet for longer, the Mac may be off. */
+	const QUIET_MS = 10 * 60_000;
+	function quiet(v: Video): boolean {
+		const t = ms(v.updatedAt);
+		return t !== null && now - t > QUIET_MS;
+	}
+	function staleVideo(v: Video): boolean {
+		const t = ms(v.updatedAt);
+		return v.status === 'processing' && !!staleMs && t !== null && now - t > staleMs.video;
+	}
+	function staleClip(c: TvClip): boolean {
+		const t = ms((c as TvClip & { updatedAt?: unknown }).updatedAt);
+		return c.status === 'rendering' && !!staleMs && t !== null && now - t > staleMs.clip;
+	}
+	/** Run again and Delete: refused while the Mac holds the video, unless it abandoned it. */
+	const canAct = (v: Video) => canWrite && (v.status !== 'processing' || staleVideo(v));
+
+	// ---- Run again / Delete, each confirmed in the page.
+	let confirmOpen = $state(false);
+	let confirming = $state<{
+		title: string;
+		body: string;
+		ok: string;
+		danger?: boolean;
+		run: () => Promise<void>;
+	} | null>(null);
+	let confirmError = $state<string | null>(null);
+	let confirmBusy = $state(false);
+	function ask(c: NonNullable<typeof confirming>) {
+		confirming = c;
+		confirmError = null;
+		confirmOpen = true;
+	}
+	async function confirmed() {
+		if (!confirming) return;
+		confirmBusy = true;
+		confirmError = null;
 		try {
-			await callAction(target, { id });
-			if (target === 'core:tv.video.delete') selected = null;
+			await confirming.run();
+			confirmOpen = false;
 		} catch (e) {
-			error = errorText(e);
+			confirmError = errorText(e);
+		} finally {
+			confirmBusy = false;
 		}
+	}
+	function runAgain(v: Video) {
+		const n = v.id === selected ? clips.filter((c) => c.status === 'suggested').length : 0;
+		ask({
+			title: 'Run it again?',
+			body: `The Mac transcribes it again and proposes new clips with the current Skill. Suggested clips (${n}) and your edits to them are replaced. Approved and rendered clips stay.`,
+			ok: 'Run again',
+			run: async () => {
+				await callAction('core:tv.video.retry', { id: v.id });
+			}
+		});
+	}
+	function deleteVideo(v: Video) {
+		ask({
+			title: 'Delete this video?',
+			body: 'It leaves FLF TV with its transcript and every clip. The files in Drive stay.',
+			ok: 'Delete',
+			danger: true,
+			run: async () => {
+				await callAction('core:tv.video.delete', { id: v.id });
+				selected = null;
+			}
+		});
 	}
 
 	/**
@@ -90,8 +160,8 @@
 	 * status and step (the worker writes them) and, for the last one, its clips.
 	 */
 	const STEPS = [
-		['transcribing', '① Transcript', 'Whisper on the Mac, a time for every word'],
-		['pauses', '② Pauses + transcript', 'ffmpeg measures every silence in the audio'],
+		['transcribing', '① Transcript', 'On the Mac: finds every word’s time'],
+		['pauses', '② Pauses + transcript', 'Measures the pauses in the audio'],
 		[
 			'topics',
 			'③ Topics and clips',
@@ -105,7 +175,7 @@
 	] as const;
 	const ORDER = ['downloading', 'transcribing', 'pauses', 'topics'];
 	function stepState(
-		v: TvVideo,
+		v: Video,
 		key: string,
 		list: TvClip[]
 	): 'done' | 'running' | 'waiting' | 'failed' {
@@ -130,10 +200,17 @@
 		return mine === at || (key === 'transcribing' && at === 0) ? 'running' : 'waiting';
 	}
 	const STATE_STYLE = {
-		done: 'border-success/40 bg-success/5',
-		running: 'border-primary-300 bg-primary-50',
-		waiting: 'border-line/60 bg-white opacity-70',
+		done: 'border-primary-200 bg-primary-50/60',
+		running: 'border-warning/50 bg-warning/5',
+		waiting: 'border-line/60 bg-white',
 		failed: 'border-danger/40 bg-danger/5'
+	};
+	/** The step's circle: filled when done, a visible ring while waiting. */
+	const DOT_STYLE = {
+		done: 'bg-primary-600 text-white',
+		running: 'border-2 border-warning bg-white',
+		waiting: 'border-2 border-line bg-white',
+		failed: 'border-2 border-danger bg-white'
 	};
 	function rendered(list: TvClip[]): string {
 		const live = list.filter((c) => c.status !== 'rejected');
@@ -141,7 +218,7 @@
 			? `${live.filter((c) => c.status === 'rendered').length} of ${live.length} clips ready`
 			: '';
 	}
-	function summary(v: TvVideo): string {
+	function summary(v: Video): string {
 		if (v.status === 'queued') return 'Waiting for the Mac';
 		if (v.status === 'processing') return 'Processing on the Mac…';
 		if (v.status === 'failed') return 'Failed';
@@ -156,16 +233,37 @@
 	let defaults = $state<TvBrand>({});
 	let saving = $state(false);
 	let saved = $state<string | null>(null);
-	async function loadSkill(id: 'clipping' | 'brand') {
-		const s = await callAction<TvSkill>('core:tv.skill.get', { id });
+	/** The brand settings as last saved, to tell unsaved edits. */
+	let savedBrand = $state('');
+	function loaded(id: 'clipping' | 'brand', s: TvSkill) {
 		skill[id] = s;
 		text[id] = s.text;
-		if (s.brand) brand = { ...s.brand };
+		if (s.brand) {
+			brand = { ...s.brand };
+			savedBrand = JSON.stringify(s.brand);
+		}
+	}
+	async function loadSkill(id: 'clipping' | 'brand') {
+		loaded(id, await callAction<TvSkill>('core:tv.skill.get', { id }));
+	}
+	const dirtyOf = (id: 'clipping' | 'brand') =>
+		!!skill[id] &&
+		(text[id] !== skill[id]!.text || (id === 'brand' && JSON.stringify(brand) !== savedBrand));
+	let dirty = $derived(canWrite && (dirtyOf('clipping') || dirtyOf('brand')));
+	const LEAVE = 'You have unsaved Skill edits. Leave without saving?';
+	beforeNavigate((nav) => {
+		if (dirty && nav.type !== 'leave' && !confirm(LEAVE)) nav.cancel();
+	});
+	function onbeforeunload(e: BeforeUnloadEvent) {
+		if (dirty) e.preventDefault();
 	}
 	onMount(() => {
-		callAction<{ defaultBrand: TvBrand }>('core:tv.config.get').then(
-			(c) => (defaults = c.defaultBrand)
-		);
+		callAction<{ defaultBrand: TvBrand; staleMs: { video: number; clip: number } }>(
+			'core:tv.config.get'
+		).then((c) => {
+			defaults = c.defaultBrand;
+			staleMs = c.staleMs;
+		});
 		loadSkill('clipping');
 		loadSkill('brand');
 	});
@@ -180,7 +278,7 @@
 				text: text[id],
 				...(id === 'brand' ? { brand } : {})
 			});
-			skill[id] = s;
+			loaded(id, s);
 			saved = `Saved as version ${s.version}. The next video uses it.`;
 		} catch (e) {
 			error = errorText(e);
@@ -191,10 +289,7 @@
 	async function resetSkill() {
 		const id = skillTab;
 		if (!confirm('Go back to the built-in version? Your edits are lost.')) return;
-		const s = await callAction<TvSkill>('core:tv.skill.reset', { id });
-		skill[id] = s;
-		text[id] = s.text;
-		if (s.brand) brand = { ...s.brand };
+		loaded(id, await callAction<TvSkill>('core:tv.skill.reset', { id }));
 	}
 	const BRAND_FIELDS: [string, string][] = [
 		['highlightColor', 'Spoken word colour'],
@@ -219,6 +314,8 @@
 		`${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 </script>
 
+<svelte:window {onbeforeunload} />
+
 <div class="mx-auto max-w-6xl space-y-4">
 	<div class="flex items-center justify-between">
 		<div class="flex rounded-lg border border-line/70 bg-white p-0.5">
@@ -237,7 +334,7 @@
 			{/each}
 		</div>
 		<p class="text-xs text-ink-soft">
-			Whisper, ffmpeg and rendering run on the Mac (<code>tv-worker</code>); the Skill lives here.
+			The Mac does the work: transcript, pauses, cuts and covers. The Skill lives here.
 		</p>
 	</div>
 	<FormError message={error} />
@@ -316,40 +413,70 @@
 								>
 									<ExternalLink class="h-4 w-4" />
 								</a>
-								{#if canWrite && video.status !== 'processing'}
+								{#if canAct(video)}
 									<button
-										class="btn-ghost px-2"
-										title="Run again with the current Skill"
-										onclick={() => videoAct('core:tv.video.retry', video!.id)}
+										class="btn-ghost"
+										title="Transcribe it again and propose new clips with the current Skill"
+										onclick={() => runAgain(video!)}
 									>
-										<RefreshCw class="h-4 w-4" />
+										<RefreshCw class="h-4 w-4" /> Run again
 									</button>
 									<button
 										class="btn-ghost px-2 text-danger"
 										title="Delete"
-										onclick={() => videoAct('core:tv.video.delete', video!.id)}
+										aria-label="Delete"
+										onclick={() => deleteVideo(video!)}
 									>
 										<Trash class="h-4 w-4" />
 									</button>
 								{/if}
 							</div>
 						</div>
+						{#if video.status === 'queued' || video.status === 'processing'}
+							{@const since = video.updatedAt ?? video.createdAt}
+							{@const waiting = video.status === 'queued' || quiet(video)}
+							<div
+								class="rounded-xl border px-4 py-2.5 text-sm {waiting
+									? 'border-warning/40 bg-warning/10'
+									: 'border-primary-200 bg-primary-50'}"
+								role="status"
+							>
+								{#if video.status === 'queued'}
+									<strong>Waiting for the Mac since {formatDateTime(since)} — is it on?</strong>
+								{:else if waiting}
+									<strong>No word from the Mac since {formatDateTime(since)} — is it on?</strong>
+								{:else}
+									<strong>The Mac is working on it.</strong>
+								{/if}
+								<span class="text-ink-soft">Last activity {ago(since)}.</span>
+								{#if staleVideo(video)}
+									<p class="mt-1 text-xs text-ink">
+										The Mac seems to have stopped: you can run it again or delete it.
+									</p>
+								{:else if waiting}
+									<p class="mt-1 text-xs text-ink-soft">
+										It starts by itself once FLF TV is running on the Mac.
+									</p>
+								{/if}
+							</div>
+						{/if}
 						<ol class="space-y-2">
 							{#each STEPS as [key, label, help] (key)}
 								{@const st = stepState(video, key, clips)}
 								<li class="flex items-center gap-3 rounded-xl border px-4 py-3 {STATE_STYLE[st]}">
 									<span
-										class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold {st ===
-										'done'
-											? 'bg-success text-white'
-											: 'bg-white text-ink-soft'}"
+										class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold {DOT_STYLE[
+											st
+										]}"
 									>
 										{#if st === 'done'}<Check class="h-4 w-4" />{:else if st === 'running'}<span
-												class="h-2 w-2 animate-pulse rounded-full bg-primary-600"
+												class="h-2 w-2 animate-pulse rounded-full bg-warning"
 											></span>{/if}
 									</span>
 									<div class="min-w-0 flex-1">
-										<div class="text-sm font-semibold">{label}</div>
+										<div class="text-sm font-semibold {st === 'waiting' ? 'text-ink-soft' : ''}">
+											{label}
+										</div>
 										<div class="text-xs text-ink-soft">
 											{key === 'render' && rendered(clips) ? rendered(clips) : help}
 										</div>
@@ -387,42 +514,57 @@
 		</div>
 		{@const s = skill[skillTab]}
 		<div class="grid grid-cols-3 gap-4">
-			<section class="col-span-2 card px-4 py-3">
-				<div class="flex items-center justify-between">
-					<div>
-						<h3 class="font-bold">
-							{skillTab === 'clipping' ? 'Clipping skill' : 'Brand and covers skill'}
-						</h3>
-						<p class="text-xs text-ink-soft">
-							{#if s}{s.isDefault
-									? 'Built-in version'
-									: `Version ${s.version}, by ${s.updatedBy} ${relative(s.updatedAt)}`}{/if}
+			<section class="col-span-2 flex flex-col card">
+				<div class="px-4 pt-3">
+					<h3 class="font-bold">
+						{skillTab === 'clipping' ? 'Clipping skill' : 'Brand and covers skill'}
+					</h3>
+					<p class="text-xs text-ink-soft">
+						{#if s}{s.isDefault
+								? 'Built-in version'
+								: `Version ${s.version}, by ${s.updatedBy} ${relative(s.updatedAt)}`}{/if}
+					</p>
+					{#if skillTab === 'brand'}
+						<p class="mt-1 text-xs text-ink-soft">
+							Colours, sizes and durations come from the <strong>Renderer settings</strong> on the right:
+							those are the ones that count. This text describes the look and how to choose a cover.
 						</p>
-					</div>
-					{#if canWrite}
-						<div class="flex gap-2">
-							{#if s && !s.isDefault}<button class="btn-ghost" onclick={resetSkill}>
-									Built-in version
-								</button>{/if}
-							<button class="btn-primary" disabled={saving} onclick={saveSkill}>Save</button>
-						</div>
 					{/if}
+					<textarea
+						class="mt-3 input font-mono text-xs leading-relaxed"
+						rows="28"
+						readonly={!canWrite}
+						bind:value={text[skillTab]}></textarea>
 				</div>
-				{#if saved}<p class="mt-2 text-sm text-primary-700">{saved}</p>{/if}
-				<textarea
-					class="mt-3 input font-mono text-xs leading-relaxed"
-					rows="28"
-					readonly={!canWrite}
-					bind:value={text[skillTab]}></textarea>
+				{#if canWrite}
+					<!-- Sticky: Save stays in reach while scrolling the long text. -->
+					<div
+						class="sticky bottom-0 mt-3 flex items-center justify-end gap-2 rounded-b-xl border-t border-line/60 bg-white px-4 py-2.5"
+					>
+						<span
+							class="mr-auto text-xs {dirtyOf(skillTab)
+								? 'font-semibold text-warning'
+								: 'text-ink-soft'}"
+						>
+							{#if dirtyOf(skillTab)}Unsaved edits{:else if saved}{saved}{/if}
+						</span>
+						{#if s && !s.isDefault}<button class="btn-ghost" onclick={resetSkill}>
+								Built-in version
+							</button>{/if}
+						<button class="btn-primary" disabled={saving || !dirtyOf(skillTab)} onclick={saveSkill}>
+							{saving ? 'Saving…' : 'Save'}
+						</button>
+					</div>
+				{/if}
 			</section>
 			<aside class="space-y-3">
 				{#if skillTab === 'clipping'}
 					<div class="card px-4 py-3 text-sm text-ink-soft">
 						<p class="font-semibold text-ink">How the Mac uses it</p>
 						<ol class="mt-2 list-decimal space-y-1 pl-4">
-							<li><strong>Transcript:</strong> Whisper gives every word its time.</li>
+							<li><strong>Transcript:</strong> on the Mac, finds every word’s time.</li>
 							<li>
-								<strong>Pauses:</strong> ffmpeg measures each silence; the transcript is marked with them
+								<strong>Pauses:</strong> measures the pauses in the audio and marks them in the transcript
 								(⏸ 0.8s).
 							</li>
 							<li>
@@ -442,6 +584,7 @@
 				{:else}
 					<div class="card px-4 py-3">
 						<p class="text-sm font-semibold">Renderer settings</p>
+						<p class="text-xs text-ink-soft">What the clips actually use. Saved with Save.</p>
 						<div class="mt-2 space-y-2">
 							{#each BRAND_FIELDS as [key, label] (key)}
 								{#if key in brand}
@@ -533,11 +676,11 @@
 			{/if}
 			<div class="space-y-3">
 				{#each clips as c (c.id)}
-					<ClipCard clip={c} {canWrite} maxSec={video.durationSec ?? 99999} />
+					<ClipCard clip={c} {canWrite} stale={staleClip(c)} maxSec={video.durationSec ?? 99999} />
 				{:else}
 					<p class="text-sm text-ink-soft">
 						{video.status === 'review'
-							? 'Claude found no clip worth cutting. Adjust the Skill and run it again (↻ in Upload).'
+							? 'Claude found no clip worth cutting. Adjust the Skill and press Run again in Upload.'
 							: 'The clips appear here as the Mac makes them.'}
 					</p>
 				{/each}
@@ -545,3 +688,20 @@
 		{/if}
 	{/if}
 </div>
+
+<Modal bind:open={confirmOpen} title={confirming?.title ?? ''} width="max-w-md">
+	{#if confirming}
+		<p class="text-sm">{confirming.body}</p>
+		{#if confirmError}<div class="mt-3"><FormError message={confirmError} /></div>{/if}
+	{/if}
+	{#snippet footer()}
+		<button class="btn-ghost" onclick={() => (confirmOpen = false)}>Cancel</button>
+		<button
+			class={confirming?.danger ? 'btn-ghost font-bold text-danger' : 'btn-primary'}
+			disabled={confirmBusy}
+			onclick={confirmed}
+		>
+			{confirming?.ok}
+		</button>
+	{/snippet}
+</Modal>

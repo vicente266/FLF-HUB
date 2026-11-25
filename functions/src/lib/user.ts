@@ -1,4 +1,5 @@
 import admin from 'firebase-admin';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { db } from '../firestore';
 import * as group from './group';
 import { serverTimestamp } from './utils';
@@ -76,7 +77,10 @@ export async function hasPermission(uid: string, permission: string): Promise<bo
 	return (await permissionsOf(data.groups ?? [])).includes(permission);
 }
 
-/** What an admin controls about a user. The `syncUserRole` trigger mirrors the role into claims. */
+/**
+ * What an admin controls about a user. The `syncUserRole` trigger mirrors the role into claims.
+ * The last admin can't be demoted (one count query, only on a demotion): nobody could undo it.
+ */
 export async function updateAccess(
 	uid: string,
 	role: UserRole,
@@ -84,6 +88,11 @@ export async function updateAccess(
 	sherpa: boolean
 ): Promise<{ before: UserRole | null }> {
 	const before = await roleOf(uid);
+	if (before === 'admin' && role !== 'admin') {
+		const admins = (await collection.where('role', '==', 'admin').count().get()).data().count;
+		if (admins <= 1)
+			throw new HttpsError('failed-precondition', 'Make someone else an admin first.');
+	}
 	await collection.doc(uid).update({ role, groups, sherpa, updatedAt: serverTimestamp() });
 	// The claim now, not only through the syncUserRole trigger.
 	await admin.auth().setCustomUserClaims(uid, { role });

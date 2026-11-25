@@ -164,8 +164,8 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			title: 'FLF Hub overview',
 			description:
 				'Start here. Who you are in the Hub and what you may do, the pipelines (Fellows, Gurus, ' +
-				'Investors) with their stages, the KPIs (new contacts in 30 days, contacts needing attention, ' +
-				'open and overdue tasks) and your own open tasks.',
+				'Investors) with their stages, your KPIs (the team’s new contacts in 30 days, your contacts ' +
+				'needing attention, your open and overdue tasks) and your own open tasks.',
 			inputSchema: z.object({}),
 			annotations: read
 		},
@@ -175,8 +175,9 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			async () => {
 				const canCrm = await hasPermission(caller.auth, 'crm.any.read');
 				const canReports = await hasPermission(caller.auth, 'reports.any.read');
-				const [summary, mine] = await Promise.all([
+				const [summary, kpis, mine] = await Promise.all([
 					canReports ? reports.summary() : null,
+					canReports ? reports.kpis(caller.uid) : null,
 					canCrm
 						? crm.tasks
 								.where('assigneeUid', '==', caller.uid)
@@ -213,7 +214,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
 						])
 					),
 					staleAfterDays: STALE_DAYS,
-					kpis: summary?.kpis ?? 'no reports.any.read permission',
+					kpis: kpis ?? 'no reports.any.read permission',
 					funnel: summary?.funnel ?? null,
 					myOpenTasks: canCrm ? myTasks : 'no crm.any.read permission'
 				});
@@ -517,7 +518,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			title: 'Pipeline report',
 			description:
 				'The Reports page: count per stage for each pipeline, where contacts came from in the last ' +
-				'30 days, and KPIs.',
+				'30 days, and your KPIs (as on Home).',
 			inputSchema: z.object({}),
 			annotations: read
 		},
@@ -527,7 +528,8 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			async () => {
 				await need('reports.any.read');
 				await audit(caller, 'flf_report', ['summary']);
-				return data(await reports.summary());
+				const [summary, kpis] = await Promise.all([reports.summary(), reports.kpis(caller.uid)]);
+				return data({ ...summary, kpis });
 			}
 		)
 	);
@@ -668,9 +670,10 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			.describe('Partners: the strategy id from flf_list_strategies, or "" for none')
 	};
 	/** Tool arguments → the screen's payload (strategy_id → strategyId). */
-	const contactPayload = ({ strategy_id, ...rest }: Record<string, unknown>) => ({
+	const contactPayload = ({ strategy_id, owner_id, ...rest }: Record<string, unknown>) => ({
 		...rest,
-		...(strategy_id !== undefined ? { strategyId: strategy_id } : {})
+		...(strategy_id !== undefined ? { strategyId: strategy_id } : {}),
+		...(owner_id !== undefined ? { ownerUid: owner_id } : {})
 	});
 
 	server.registerTool(
@@ -678,12 +681,15 @@ export function registerTools(server: McpServer, caller: Caller): void {
 		{
 			title: 'Create contact',
 			description:
-				'Add a Fellow, Guru, Investor or Partner in its pipeline’s first stage. A name is needed, ' +
+				'Add a Fellow, Guru, Investor or Partner, in its pipeline’s first stage unless you pass ' +
+				'a stage id, with an owner (owner_id from flf_list_team) or none. A name is needed, ' +
 				'or for a Partner the organisation in company (name = its main contact). The Hub refuses ' +
 				'a second contact with the same email (search first). Shows in the Hub as made via Claude.',
 			inputSchema: z.object({
 				type: TYPE,
 				source: z.enum(SOURCES).default('manual'),
+				stage: z.string().max(64).optional(),
+				owner_id: ID.optional(),
 				...contactFields
 			}),
 			annotations: write
@@ -850,6 +856,57 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			async ({ task_id, done }) => {
 				await act('crm', 'task.done', { id: task_id, done });
 				return data({ task: task_id, done });
+			}
+		)
+	);
+
+	server.registerTool(
+		'flf_update_task',
+		{
+			title: 'Update task',
+			description:
+				'Change a task’s title, due date (YYYY-MM-DD, or "" for none) or assignee (assignee_id ' +
+				'from flf_list_team, or "" for nobody). Send only what changes. A task from the portal ' +
+				'sheet only takes a new assignee; its title and date are changed in the sheet.',
+			inputSchema: z.object({
+				task_id: ID,
+				title: z.string().min(1).max(300).optional(),
+				due_date: z.union([DATE, z.literal('')]).optional(),
+				assignee_id: z.union([ID, z.literal('')]).optional()
+			}),
+			annotations: write
+		},
+		run(
+			'flf_update_task',
+			(a) => a.task_id,
+			async (a) => {
+				await act('crm', 'task.update', {
+					id: a.task_id,
+					title: a.title,
+					dueAt: a.due_date,
+					assigneeUid: a.assignee_id
+				});
+				return data({ updated: a.task_id });
+			}
+		)
+	);
+
+	server.registerTool(
+		'flf_delete_task',
+		{
+			title: 'Delete task',
+			description:
+				'Permanently delete a task. Cannot be undone; to close one, use flf_complete_task. Only when ' +
+				'the person explicitly asks to delete it. Tasks from the portal sheet cannot be deleted here.',
+			inputSchema: z.object({ task_id: ID }),
+			annotations: destroy
+		},
+		run(
+			'flf_delete_task',
+			(a) => a.task_id,
+			async ({ task_id }) => {
+				await act('crm', 'task.delete', { id: task_id });
+				return data({ deleted: task_id });
 			}
 		)
 	);

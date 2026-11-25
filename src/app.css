@@ -54,6 +54,19 @@ body {
 	select {
 		cursor: pointer;
 	}
+	/* Visible keyboard focus for custom controls (links, switches, clickable rows) that set none.
+	   Controls with their own `focus:ring` keep it; checkboxes and radios stay ring-free. */
+	:where(
+		a[href],
+		button,
+		summary,
+		[role='switch'],
+		[role='button'],
+		[tabindex]:not([tabindex='-1'])
+	):focus-visible {
+		outline: 2px solid var(--color-focus);
+		outline-offset: 2px;
+	}
 	input[type='checkbox']:focus,
 	input[type='radio']:focus {
 		outline: none;

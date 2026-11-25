@@ -341,6 +341,52 @@
 					"order": "DESCENDING"
 				}
 			]
+		},
+		{
+			"collectionGroup": "task",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "assigneeUid",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "done",
+					"order": "ASCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "contact",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "ownerUid",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "open",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "lastActivityAt",
+					"order": "ASCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "contact",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "open",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "lastActivityAt",
+					"order": "ASCENDING"
+				}
+			]
 		}
 	],
 	"fieldOverrides": []

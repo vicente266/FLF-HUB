@@ -30,6 +30,8 @@
 	let busy = $state(false);
 	let framed = $state(false);
 	let password = $state('');
+	/** The request can't be used (expired, already used, changed): only a new Connect helps. */
+	let badLink = $state(false);
 
 	const usesPassword = () =>
 		auth.currentUser?.providerData.some((p) => p.providerId === 'password') ?? false;
@@ -41,10 +43,16 @@
 		params = Object.fromEntries(new URLSearchParams(location.search));
 		try {
 			client = await callAction<Client>('core:claude.client', params);
+			badLink = !!client.error;
 		} catch (e) {
 			error = errorText(e);
+			badLink = isBadLink(e);
 		}
 	});
+
+	/** The OAuth checks answer `invalid-argument` for a missing, expired or altered request. */
+	const isBadLink = (e: unknown) =>
+		!!e && typeof e === 'object' && 'code' in e && e.code === 'functions/invalid-argument';
 
 	async function approve() {
 		const user = auth.currentUser;
@@ -67,6 +75,7 @@
 			location.href = res.redirect;
 		} catch (e) {
 			error = errorText(e);
+			badLink = isBadLink(e);
 			busy = false;
 		}
 	}
@@ -79,7 +88,14 @@
 				<ShieldCheck class="h-5 w-5" />
 				<span class="eyebrow">Connect Claude</span>
 			</div>
-			<FormError message={error} />
+			{#if error}<div class="mt-3"><FormError message={error} /></div>{/if}
+			{#if badLink}
+				<p class="mt-3 text-sm">
+					<a href="/claude" class="font-semibold text-primary-700 hover:underline">
+						Go back to Claude and press Connect again
+					</a>.
+				</p>
+			{/if}
 			{#if client}
 				{#if client.error}
 					<p class="mt-3 text-sm text-danger">{client.error}</p>
@@ -91,7 +107,7 @@
 						<li>Signed in as <strong>{$me?.email}</strong>.</li>
 						<li>
 							It can read and change what your Hub profile allows: contacts, tasks, reports,
-							automations, connections.
+							automations, connections, FLF TV and Knowledge.
 						</li>
 						<li>Changes show in the Hub marked <strong>via Claude</strong>.</li>
 						<li>After you approve, you are sent back to <strong>{client.sendsTo}</strong>.</li>

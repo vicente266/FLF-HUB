@@ -280,11 +280,14 @@
 	<!-- Summary, source and actions on one line. -->
 	<div class="flex flex-wrap items-end justify-between gap-4">
 		<div class="flex flex-wrap items-baseline gap-6">
-			<span><span class="text-3xl font-bold">{stats.total}</span> documents</span>
+			<span>
+				<span class="text-3xl font-bold">{stats.total}</span>
+				{stats.total === 1 ? 'document' : 'documents'}
+			</span>
 			<span><span class="text-3xl font-bold text-success">{stats.approved}</span> approved</span>
 			<span><span class="text-3xl font-bold">{stats.draft}</span> draft</span>
 			{#if stats.review}<span>
-					<span class="text-3xl font-bold text-amber-700">{stats.review}</span> review due
+					<span class="text-3xl font-bold text-warning">{stats.review}</span> review due
 				</span>{/if}
 			<span class="text-xs text-ink-soft">
 				Claude: {counts.always} always · {counts.relevant} when relevant · {counts.off} off
@@ -304,7 +307,7 @@
 			</span>
 			{#if stats.noUseWhen && canWrite}
 				<button
-					class="font-semibold text-amber-700 hover:underline"
+					class="font-semibold text-warning hover:underline"
 					onclick={() => (statusFilter = 'nouse')}
 					title="Entries without a Use when line: Claude can't tell when to read them"
 				>
@@ -336,7 +339,7 @@
 		/>
 		<select class="input w-auto pr-9" bind:value={typeFilter} aria-label="Type">
 			<option value="">All types</option>
-			{#each types as t, i (t.id)}<option value={t.id}>{i + 1} · {t.label}</option>{/each}
+			{#each types as t (t.id)}<option value={t.id}>{t.label}</option>{/each}
 		</select>
 		<select class="input w-auto pr-9" bind:value={audienceFilter} aria-label="Audience">
 			<option value="">Any audience</option>
@@ -377,7 +380,7 @@
 						<th class="px-3 py-2">
 							<button
 								class="font-semibold {sortBy === 'rank' ? 'text-ink' : ''}"
-								title="Precedence: when two entries disagree, the lower number wins"
+								title="Precedence: when two entries disagree, the type higher in this order wins"
 								onclick={() => (sortBy = 'rank')}
 							>
 								Type{sortBy === 'rank' ? ' ↑' : ''}
@@ -414,7 +417,7 @@
 									<div class="mt-0.5 text-ink">{e.useWhen}</div>
 								{:else if canWrite}
 									<button
-										class="mt-0.5 block text-left text-xs text-amber-700 hover:underline"
+										class="mt-0.5 block text-left text-xs text-warning hover:underline"
 										onclick={() => edit(e)}
 									>
 										Add “Use when…”: Claude can't tell when to read it
@@ -441,7 +444,7 @@
 										<span>#{t}</span>
 									{/each}
 									{#if e.expiredAt}
-										<span class={isExpired(e) ? 'text-danger' : 'text-amber-700'}>
+										<span class={isExpired(e) ? 'text-danger' : 'text-warning'}>
 											{isExpired(e) ? 'expired' : 'until'}
 											{day(e.expiredAt)}
 										</span>
@@ -449,7 +452,7 @@
 								</div>
 							</td>
 							<td class="px-3 py-3 whitespace-nowrap">
-								{typeIndex(e) + 1} · {types[typeIndex(e)]?.label ?? 'Other'}
+								{types[typeIndex(e)]?.label ?? 'Other'}
 							</td>
 							<td class="px-3 py-3">
 								<span
@@ -476,6 +479,7 @@
 										{#each uses as u (u.id)}<option
 												value={u.id}
 												disabled={u.id === 'always' && !approved(e)}
+												title={u.id === 'always' && !approved(e) ? 'Approve it first' : u.help}
 											>
 												{u.label}
 											</option>{/each}
@@ -491,7 +495,7 @@
 									<div class="text-success">{e.approvedOn ? day(e.approvedOn) : 'Approved'}</div>
 									<div class="text-xs text-ink-soft">{e.approvedBy}</div>
 									{#if reviewDue(e)}
-										<div class="text-xs font-semibold text-amber-700">Review due</div>
+										<div class="text-xs font-semibold text-warning">Review due</div>
 										{#if canWrite}<button
 												class="text-xs font-semibold text-primary-700 hover:underline"
 												disabled={approving === e.id}
@@ -541,9 +545,10 @@
 		{/if}
 	</section>
 	<p class="text-xs text-ink-soft">
-		Type order is the precedence: when two entries disagree, the lower number wins, then approved
-		over draft, then the more recently reviewed. Only an approved entry can be Always. Admins-only
-		entries are hidden from everyone else and from their Claude.
+		Precedence, when two entries disagree: the type higher in this order wins ({types
+			.map((t) => t.label)
+			.join(', ')}), then approved over draft, then the more recently reviewed. Only an approved
+		entry can be Always. Admins-only entries are hidden from everyone else and from their Claude.
 	</p>
 </div>
 
@@ -562,8 +567,12 @@
 		<p class="text-sm text-ink-soft">Loading…</p>
 	{:else}
 		<p class="mb-2 text-xs text-ink-soft">
-			<strong>Always:</strong> the text Claude receives before writing about FLF, inside a note telling
-			it to follow it for facts and wording.
+			<strong>Always:</strong> the text Claude receives before writing about FLF, inside a note
+			telling it to follow it for facts and wording. Each entry carries a <code>rank</code>: the
+			precedence as one number, 1 the strongest. It counts the type order and the status together (1
+			= approved {types[0]?.label ?? 'Policies'}, 2 = draft {types[0]?.label ?? 'Policies'}, 3 =
+			approved {types[1]?.label ?? 'Decisions'}…), so it runs to {types.length * 2}, not to the {types.length}
+			types.
 		</p>
 		<pre
 			class="max-h-[45vh] overflow-auto rounded-lg bg-canvas px-3 py-2 text-xs whitespace-pre-wrap">{claude.active ||

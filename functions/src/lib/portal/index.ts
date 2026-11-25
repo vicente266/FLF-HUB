@@ -763,7 +763,9 @@ export async function run() {
 				open: !final,
 				stageChangedAt: now,
 				lostReason: '',
-				needsAttention: false
+				needsAttention: false,
+				// A move made in the sheet is activity too.
+				lastActivityAt: now
 			});
 			await ref.collection('activity').add({
 				kind: 'stage',
@@ -787,6 +789,7 @@ export async function run() {
 		const sheetNext = portal.sheetNextStep;
 		if ((cur.nextStep ?? '') !== sheetNext && cur.portal?.sheetNextStep !== sheetNext) {
 			update.nextStep = sheetNext;
+			update.lastActivityAt = now;
 			await ref.collection('activity').add({
 				kind: 'updated',
 				text: `Next step: ${nextStepOf(sheetNext)?.label ?? 'none'} (from the portal sheet)`,

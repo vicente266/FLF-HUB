@@ -6,14 +6,36 @@
 	import { callAction, errorText } from '$lib/actions';
 	import type { TvClip } from '$lib/types/tv';
 
-	let { clip, canWrite, maxSec }: { clip: TvClip; canWrite: boolean; maxSec: number } = $props();
+	let {
+		clip,
+		canWrite,
+		maxSec,
+		stale = false
+	}: {
+		clip: TvClip;
+		canWrite: boolean;
+		maxSec: number;
+		/** Rendering, but the Mac stopped long ago: it can be edited again (the backend allows it). */
+		stale?: boolean;
+	} = $props();
 
-	const mmss = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
+	/** Seconds as m:ss.s (83.4 → 1:23.4). */
+	const mmss = (t: number) => {
+		const tenths = Math.round(t * 10);
+		const m = Math.floor(tenths / 600);
+		return `${m}:${((tenths - m * 600) / 10).toFixed(1).padStart(4, '0')}`;
+	};
+	/** m:ss.s, h:mm:ss.s or plain seconds back to seconds; NaN when unreadable. */
+	function seconds(input: string): number {
+		const v = input.trim().replace(',', '.');
+		if (!/^\d+(\.\d+)?$|^\d+(:\d{1,2}){1,2}(\.\d+)?$/.test(v)) return NaN;
+		return v.split(':').reduce((acc, part) => acc * 60 + Number(part), 0);
+	}
 	const STATUS: Record<string, string> = {
 		suggested: 'bg-canvas text-ink-soft',
 		approved: 'bg-primary-50 text-primary-700',
-		rendering: 'bg-amber-50 text-amber-800',
-		rendered: 'bg-success/10 text-success',
+		rendering: 'bg-warning/10 text-warning',
+		rendered: 'bg-primary-600 text-white',
 		rejected: 'bg-line/40 text-ink-soft line-through',
 		failed: 'bg-danger/10 text-danger'
 	};
@@ -34,19 +56,22 @@
 	}
 
 	let editing = $state(false);
-	let draft = $state({ start: 0, end: 0, hook: '', caption: '', hashtags: '', focusX: 0.5 });
+	let draft = $state({ start: '', end: '', hook: '', caption: '', hashtags: '', focusX: 0.5 });
+	/** The times as first shown, so an untouched time is not sent back rounded. */
+	let shown = { start: '', end: '' };
 	let error = $state<string | null>(null);
 	let busy = $state(false);
 
 	function edit() {
 		draft = {
-			start: clip.start,
-			end: clip.end,
+			start: mmss(clip.start),
+			end: mmss(clip.end),
 			hook: clip.hook,
 			caption: clip.caption,
 			hashtags: clip.hashtags.join(' '),
 			focusX: clip.focusX ?? 0.5
 		};
+		shown = { start: draft.start, end: draft.end };
 		error = null;
 		editing = true;
 	}
@@ -67,11 +92,29 @@
 		}
 	}
 
-	const save = () =>
+	let start = $derived(seconds(draft.start));
+	let end = $derived(seconds(draft.end));
+	/** What's wrong with the times, checked as the backend does; null when they are fine. */
+	let timesError = $derived.by(() => {
+		if (Number.isNaN(start)) return 'Start: write it as m:ss.s (1:23.4) or seconds (83.4).';
+		if (Number.isNaN(end)) return 'End: write it as m:ss.s (1:23.4) or seconds (83.4).';
+		if (end > maxSec + 0.5) return `End is after the video ends (${mmss(maxSec)}).`;
+		if (end <= start + 3) return 'End must be at least 3 s after the start.';
+		return null;
+	});
+
+	function save() {
+		if (timesError) {
+			error = timesError;
+			return;
+		}
 		act('core:tv.clip.update', {
 			...draft,
+			start: draft.start === shown.start ? clip.start : start,
+			end: draft.end === shown.end ? clip.end : end,
 			hashtags: draft.hashtags.split(/[\s,]+/).filter(Boolean)
 		});
+	}
 </script>
 
 <div class="card px-4 py-3 {clip.status === 'rejected' ? 'opacity-60' : ''}">
@@ -85,7 +128,7 @@
 					<span
 						title="Where each edge was cut"
 						class={clip.startCut === 'silence' && clip.endCut === 'silence'
-							? 'text-success'
+							? 'text-primary-700'
 							: 'text-warning'}
 					>
 						· {cutText(clip)}
@@ -99,11 +142,14 @@
 				</span>
 			</div>
 			<h4 class="mt-1 font-bold">{clip.hook}</h4>
+			{#if clip.status === 'failed' && clip.error}<p class="mt-0.5 text-xs text-danger">
+					{clip.error}
+				</p>{/if}
 			{#if clip.reason}<p class="mt-0.5 text-xs text-ink-soft">{clip.reason}</p>{/if}
 		</div>
-		{#if canWrite && !editing && clip.status !== 'rendering'}
+		{#if canWrite && !editing && (clip.status !== 'rendering' || stale)}
 			<div class="flex shrink-0 gap-1">
-				{#if clip.status === 'suggested' || clip.status === 'failed'}
+				{#if clip.status === 'suggested'}
 					<button
 						class="btn-primary px-2"
 						title="Approve: render it"
@@ -111,6 +157,15 @@
 						onclick={() => act('core:tv.clip.status', { status: 'approved' })}
 					>
 						<Check class="h-4 w-4" /> Approve
+					</button>
+				{:else if clip.status === 'failed' || stale}
+					<button
+						class="btn-primary px-2"
+						title="Send it to the Mac to render again"
+						disabled={busy}
+						onclick={() => act('core:tv.clip.status', { status: 'approved' })}
+					>
+						<RotateCcw class="h-4 w-4" /> Render again
 					</button>
 				{/if}
 				{#if clip.status !== 'rejected'}
@@ -140,28 +195,29 @@
 	{#if editing}
 		<div class="mt-3 grid grid-cols-4 gap-2 text-sm">
 			<div>
-				<label class="label" for="s-{clip.id}">Start (s)</label>
+				<label class="label" for="s-{clip.id}">Start (m:ss.s)</label>
 				<input
 					id="s-{clip.id}"
-					class="input"
-					type="number"
-					step="0.1"
-					min="0"
-					max={maxSec}
+					class="input font-mono"
+					inputmode="decimal"
+					placeholder="1:23.4"
 					bind:value={draft.start}
 				/>
 			</div>
 			<div>
-				<label class="label" for="e-{clip.id}">End (s)</label>
+				<label class="label" for="e-{clip.id}">End (m:ss.s)</label>
 				<input
 					id="e-{clip.id}"
-					class="input"
-					type="number"
-					step="0.1"
-					min="0"
-					max={maxSec}
+					class="input font-mono"
+					inputmode="decimal"
+					placeholder="1:58.0"
 					bind:value={draft.end}
 				/>
+				<p class="mt-0.5 text-xs text-ink-soft" aria-live="polite">
+					{#if !Number.isNaN(start) && !Number.isNaN(end) && end > start}Length {(
+							end - start
+						).toFixed(1)} s{:else}&nbsp;{/if}
+				</p>
 			</div>
 			<div class="col-span-2">
 				<label class="label" for="f-{clip.id}">Framing: {framing(draft.focusX)}</label>
@@ -188,7 +244,11 @@
 				<input id="t-{clip.id}" class="input" bind:value={draft.hashtags} />
 			</div>
 		</div>
-		<div class="mt-2 flex justify-end gap-2">
+		{#if error}<p class="mt-2 text-xs text-danger" role="alert">{error}</p>{/if}
+		<div class="mt-2 flex items-center justify-end gap-3">
+			<p class="mr-auto text-xs text-ink-soft">
+				Changing times, hook or framing renders it again; caption and hashtags don’t.
+			</p>
 			<button class="btn-ghost" onclick={() => (editing = false)}>Cancel</button>
 			<button class="btn-primary" disabled={busy} onclick={save}>Save</button>
 		</div>
@@ -222,6 +282,8 @@
 		</p>
 	{/if}
 	{#if clip.coverWhy}<p class="mt-1 text-xs text-ink-soft">Cover frame: {clip.coverWhy}</p>{/if}
-	{#if clip.error}<p class="mt-2 text-xs text-danger">{clip.error}</p>{/if}
-	{#if error}<p class="mt-2 text-xs text-danger">{error}</p>{/if}
+	{#if clip.error && clip.status !== 'failed'}<p class="mt-2 text-xs text-danger">
+			{clip.error}
+		</p>{/if}
+	{#if error && !editing}<p class="mt-2 text-xs text-danger" role="alert">{error}</p>{/if}
 </div>

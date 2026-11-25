@@ -21,7 +21,30 @@ export interface ConnectionState {
 	lastEventAt?: FirebaseFirestore.Timestamp;
 	lastSyncAt?: FirebaseFirestore.Timestamp;
 	detail?: string;
+	/** What to do about a failure or a missing setup, in plain words (the detail is technical). */
+	hint?: string | null;
 }
+
+/** A check's outcome: `detail` is technical, `hint` says what a person should do. */
+interface CheckResult {
+	status: Status;
+	detail: string;
+	hint?: string;
+}
+
+const SETUP_HINT = 'Open it on Connections and follow “How to set it up”.';
+
+/** What to do when a connection's check throws, per connection. */
+const ERROR_HINT: Record<string, string> = {
+	'portal-sheet':
+		'The Hub can’t read the portal sheet. Check that it is still shared with the Hub as Viewer and that the spreadsheet id is right, then press Test connection.',
+	checkly: 'The Hub can’t reach Checkly. Try Test connection again in a few minutes.',
+	n8n: 'The Hub can’t reach n8n. Try Test connection again in a few minutes; if it keeps failing, a developer should check the n8n API key.',
+	'knowledge-folder':
+		'The Hub can’t open the Knowledge folder. Check the folder id and that the folder is shared with the Hub as Viewer, then press Test connection.',
+	'claude-connector':
+		'The Claude connector doesn’t answer. A developer should check that it is deployed.'
+};
 
 /** Secrets a check may use, passed in by the dispatcher that holds them. */
 export interface Secrets {
@@ -172,7 +195,7 @@ export async function readSheet(spreadsheetId: string, range: string): Promise<s
 }
 
 /** Check one connection for real and return what to record. Never throws. */
-async function check(id: string, secrets: Secrets): Promise<{ status: Status; detail: string }> {
+async function check(id: string, secrets: Secrets): Promise<CheckResult> {
 	const c = connector(id);
 	if (!c) return { status: 'error', detail: 'Unknown connection.' };
 	if (c.availability === 'planned') return { status: 'planned', detail: 'Not built yet.' };
@@ -190,7 +213,11 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 					.map(([k, t]) => `${k} ${t.rows.length}`)
 					.join(' · ');
 				if (drift.length)
-					return { status: 'error', detail: `The sheet's columns changed: ${drift.join('; ')}` };
+					return {
+						status: 'error',
+						detail: `The sheet's columns changed: ${drift.join('; ')}`,
+						hint: 'Columns the import needs are missing from the portal sheet. Put them back with the same names, or ask a developer to update the import.'
+					};
 				// Rows and contacts differ on purpose (team rows, merges): say how, so no one hunts a lost row.
 				const p = portal.plan(tabs, []);
 				const left = p.skipped.length ? ` Not imported as contacts: ${p.skipped.join('; ')}.` : '';
@@ -203,24 +230,38 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 				if (!secrets.checklyApiKey || !settings.accountId) {
 					return {
 						status: 'not_configured',
-						detail: 'CHECKLY_API_KEY and the account id are needed.'
+						detail: 'CHECKLY_API_KEY and the account id are needed.',
+						hint: SETUP_HINT
 					};
 				}
 				const res = await get('https://api.checklyhq.com/v1/check-statuses', {
 					Authorization: `Bearer ${secrets.checklyApiKey}`,
 					'X-Checkly-Account': settings.accountId
 				});
-				if (!res.ok) return { status: 'error', detail: `Checkly answered ${res.status}.` };
+				if (!res.ok)
+					return {
+						status: 'error',
+						detail: `Checkly answered ${res.status}.`,
+						hint: 'Checkly refused the request. Check the account id here; if it is right, a developer needs to renew the Checkly API key.'
+					};
 				const checks = (await res.json()) as {
 					name: string;
 					hasFailures: boolean;
 					hasErrors: boolean;
 				}[];
 				if (!checks.length)
-					return { status: 'not_configured', detail: 'No checks in Checkly yet.' };
+					return {
+						status: 'not_configured',
+						detail: 'No checks in Checkly yet.',
+						hint: 'Add the website, portal and Hub as URL monitors in Checkly.'
+					};
 				const failing = checks.filter((c) => c.hasFailures || c.hasErrors).map((c) => c.name);
 				return failing.length
-					? { status: 'error', detail: `Failing: ${failing.join(', ')}` }
+					? {
+							status: 'error',
+							detail: `Failing: ${failing.join(', ')}`,
+							hint: `Checkly sees a problem with ${failing.join(', ')}. Open that page to see if it is down, and Checkly for the details.`
+						}
 					: { status: 'ok', detail: `${checks.length} checks passing.` };
 			}
 			case 'n8n': {
@@ -228,13 +269,15 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 				if (!secrets.n8nApiKey || !list.length) {
 					return {
 						status: 'not_configured',
-						detail: 'Needs the workflows and an API key (developer).'
+						detail: 'Needs the workflows and an API key (developer).',
+						hint: SETUP_HINT
 					};
 				}
 				const base = N8N_BASE_URL;
 				const since = Date.now() - 24 * 3600_000;
 				const lines: string[] = [];
 				let failed = false;
+				let refused = false;
 				for (const w of list) {
 					// Read only: the executions list. Never /run, /activate or a webhook.
 					// Only its failures, so a busy workflow's successful runs can't push them out of the page.
@@ -244,6 +287,7 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 					);
 					if (!res.ok) {
 						failed = true;
+						refused = true;
 						lines.push(`${w.name}: n8n answered ${res.status}`);
 						continue;
 					}
@@ -254,7 +298,14 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 					if (errors) failed = true;
 					lines.push(`${w.name}: ${errors} failed in 24 h`);
 				}
-				return { status: failed ? 'error' : 'ok', detail: lines.join(' · ') };
+				if (!failed) return { status: 'ok', detail: lines.join(' · ') };
+				return {
+					status: 'error',
+					detail: lines.join(' · '),
+					hint: refused
+						? 'n8n refused the request: a developer needs to check the n8n API key and the workflow ids.'
+						: 'A workflow failed in the last 24 hours. Open it in n8n (Automations page) and look at its failed run; tell a developer if it keeps failing.'
+				};
 			}
 			case 'knowledge-folder': {
 				// Lazy: knowledge is not needed by the other checks.
@@ -263,7 +314,8 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 				if (unshared.length)
 					return {
 						status: 'error',
-						detail: `Shortcuts to folders the Hub can't open (share them with 900685987021-compute@developer.gserviceaccount.com as Viewer): ${unshared.join(', ')}.`
+						detail: `Shortcuts to folders the Hub can't open (share them with 900685987021-compute@developer.gserviceaccount.com as Viewer): ${unshared.join(', ')}.`,
+						hint: `Some shortcuts in the Knowledge folder point to folders the Hub can’t open (${unshared.join(', ')}). Share those folders with the Hub as Viewer (the address is in the setup steps).`
 					};
 				const readable = files.filter((f) =>
 					[
@@ -282,7 +334,8 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 				if (!CONNECTOR_URL) {
 					return {
 						status: 'not_configured',
-						detail: 'Not set up yet: a developer needs to finish setup.'
+						detail: 'Not set up yet: a developer needs to finish setup.',
+						hint: 'A developer needs to finish the setup.'
 					};
 				}
 				// Working means the server answers from outside and someone has connected Claude.
@@ -292,7 +345,8 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 				if (!meta.ok)
 					return {
 						status: 'error',
-						detail: `The connector answered ${meta.status} · ${CONNECTOR_URL}`
+						detail: `The connector answered ${meta.status} · ${CONNECTOR_URL}`,
+						hint: ERROR_HINT['claude-connector']
 					};
 				const n = (
 					await db.collection(CONNECTION_COLLECTION).where('endsAt', '>', new Date()).count().get()
@@ -300,7 +354,8 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 				if (!n)
 					return {
 						status: 'not_configured',
-						detail: `Ready, but nobody has connected Claude yet (Claude page) · ${CONNECTOR_URL}`
+						detail: `Ready, but nobody has connected Claude yet (Claude page) · ${CONNECTOR_URL}`,
+						hint: 'Connect Claude from the Claude page.'
 					};
 				return {
 					status: 'ok',
@@ -310,7 +365,11 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 		}
 		return { status: 'error', detail: 'No check for this connection.' };
 	} catch (err) {
-		return { status: 'error', detail: err instanceof Error ? err.message : String(err) };
+		return {
+			status: 'error',
+			detail: err instanceof Error ? err.message : String(err),
+			hint: ERROR_HINT[id]
+		};
 	}
 }
 
@@ -321,6 +380,7 @@ export async function test(id: string, secrets: Secrets) {
 		{
 			status: result.status,
 			detail: result.detail,
+			hint: result.hint ?? null,
 			lastCheckAt: serverTimestamp(),
 			lastError: result.status === 'error' ? result.detail : null
 		},

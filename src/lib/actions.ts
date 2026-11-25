@@ -22,8 +22,13 @@ export async function callAction<Res = unknown>(
 	return (await fn({ action, payload })).data;
 }
 
-/** A readable message from a failed call. */
+/** A readable message from a failed call, without a trailing ` [code]` meant for logs. */
 export function errorText(err: unknown): string {
-	if (err && typeof err === 'object' && 'message' in err) return String(err.message);
+	if (err && typeof err === 'object' && 'message' in err) {
+		const text = String(err.message)
+			.replace(/\s*\[[^\]\s]+\]\.?\s*$/, '')
+			.trim();
+		if (text) return text;
+	}
 	return 'Something went wrong. Try again.';
 }

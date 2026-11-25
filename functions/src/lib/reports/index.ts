@@ -1,5 +1,5 @@
 import * as crm from '../crm/index';
-import { CONTACT_TYPES, PIPELINES, SOURCES } from '../crm/config';
+import { CONTACT_TYPES, PIPELINES, SOURCES, STALE_DAYS } from '../crm/config';
 import { Timestamp } from '../utils';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -36,17 +36,30 @@ export async function summary() {
 		}))
 	);
 
-	return { funnel, sources, kpis: await kpis() };
+	return { funnel, sources };
 }
 
-/** The four headline numbers (Home shows only these): four count aggregations. */
-export async function kpis() {
+/**
+ * The four headline numbers on Home, for one person: their open tasks, their overdue ones (dated
+ * only), their open contacts with no activity for STALE_DAYS, and the team's new contacts in 30 days. Four count
+ * aggregations.
+ */
+export async function kpis(uid: string) {
 	const since30 = Timestamp.fromMillis(Date.now() - 30 * DAY);
+	const myOpen = crm.tasks.where('assigneeUid', '==', uid).where('done', '==', false);
 	const [newLast30, needsAttention, openTasks, overdue] = await Promise.all([
 		crm.contacts.where('createdAt', '>=', since30).count().get(),
-		crm.contacts.where('open', '==', true).where('needsAttention', '==', true).count().get(),
-		crm.tasks.where('done', '==', false).count().get(),
-		crm.tasks.where('done', '==', false).where('dueAt', '<', Timestamp.now()).count().get()
+		// Live, as the screens show it: open and no activity for STALE_DAYS (the daily job's flag
+		// lags up to a day).
+		crm.contacts
+			.where('ownerUid', '==', uid)
+			.where('open', '==', true)
+			.where('lastActivityAt', '<', Timestamp.fromMillis(Date.now() - STALE_DAYS * DAY))
+			.count()
+			.get(),
+		myOpen.count().get(),
+		// A range on dueAt leaves out undated tasks (null), which are never overdue.
+		myOpen.where('dueAt', '<', Timestamp.now()).count().get()
 	]);
 	return {
 		newLast30: newLast30.data().count,
@@ -58,5 +71,5 @@ export async function kpis() {
 
 export const actions = {
 	summary: async () => summary(),
-	kpis: async () => ({ kpis: await kpis() })
+	kpis: async (_p: unknown, auth: { uid: string }) => ({ kpis: await kpis(auth.uid) })
 };

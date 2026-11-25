@@ -151,6 +151,9 @@ export interface ContactDraft {
 	notes: string;
 	segment?: string;
 	strategyId?: string;
+	/** New contacts only: where it starts and who owns it. */
+	stage?: string;
+	ownerUid?: string;
 }
 
 /** A meeting from the portal sheet's Events tab (n8n's "Calendar → Events database"). */

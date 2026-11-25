@@ -139,21 +139,29 @@ Read the transcript line by line, with the pauses (⏸) it marks, before choosin
 - Caption: the post text, 1 to 3 short sentences that add context, then 3 to 5 hashtags.
 `;
 
+/**
+ * The Brand and covers skill: the look in words and the best-frame rule Claude follows when it
+ * picks a cover. Colours, sizes and durations are NOT here: the renderer reads them from the
+ * Brand settings (`Brand`), the only place they are set.
+ */
 export const DEFAULT_BRAND_SKILL = `# FLF TV brand
 
-- Colours: navy #0F1E2E (cards), FLF teal #006565 (brand), light teal #5FD4C8 (the spoken word,
-  readable on video), white text.
+The exact colours, sizes and durations are the Brand settings next to this text; the renderer uses
+those. This text describes the look and how to choose a cover.
+
+- Look: calm and clean. Navy cards, FLF teal as the brand colour, the spoken word highlighted in a
+  lighter teal that stays readable on video, white text.
 - Type: Manrope ExtraBold for captions and the hook.
-- Captions: 3 words at a time, centred in the lower third, the spoken word in light teal.
-- Hook card: the first 3 seconds, top of the frame, navy box, white text.
+- Captions: a few words at a time, centred in the lower third, the spoken word highlighted.
+- Hook card: at the start, top of the frame, a navy box with the clip's hook.
 - Logo: the FLF tile in the top-right corner, small.
-- End card: 2 seconds, navy, "Founders for Life Fellowship" and the website.
+- End card: navy, the Fellowship's name and the website.
 - Cover (vertical, for the reel) and thumbnail (16:9, for YouTube and LinkedIn): the best frame of
   the clip, the clip's hook as the title and the video's title above it, the logo, a navy band
   behind the text.
 - The best frame: people laughing or clearly happy, faces visible and in focus, eyes open, mouths
   not mid-word, all participants in shot when it is a conversation. Never a frame with closed eyes,
   motion blur, a hand over the face, or a slide.
-- Framing: 9:16, 1080×1920, the speaker's face in the upper half; adjust "focus" per clip when the
+- Framing: vertical, the speaker's face in the upper half; adjust the framing per clip when the
   speaker is not centred.
 `;

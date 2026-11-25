@@ -3,16 +3,16 @@
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import { callAction, errorText } from '$lib/actions';
 	import { setTitle } from '$lib/utils';
-	import { crmConfig } from '$lib/helpers/crmConfig.svelte';
-	import type { ContactType } from '$lib/types/crm';
+	import { crmConfig, sourceLabel } from '$lib/helpers/crmConfig.svelte';
+	import type { ContactType, Stage } from '$lib/types/crm';
 	import FormError from '$lib/components/shared/FormError.svelte';
 
 	setTitle('Reports', 'Pipeline from the CRM');
 
+	type Row = { stage: string; label: string; count: number };
 	interface Summary {
-		funnel: Record<ContactType, { stage: string; label: string; count: number }[]>;
+		funnel: Record<ContactType, Row[]>;
 		sources: { source: string; count: number }[];
-		kpis: { newLast30: number; needsAttention: number; openTasks: number; overdueTasks: number };
 	}
 
 	const cfg = crmConfig();
@@ -33,12 +33,37 @@
 	}
 	onMount(load);
 
-	const max = (rows: { count: number }[]) => Math.max(1, ...rows.map((r) => r.count));
+	const pct = (n: number, of: number) => (of ? Math.round((n / of) * 100) : 0);
+
+	/**
+	 * One pipeline as a funnel. Counts are where contacts are now, so "reached" a stage means being in
+	 * it or any later working stage; a losing stage (Lost, Declined) is apart, out of the funnel.
+	 * `next` is the share of those who reached this stage that went on to the next one.
+	 */
+	function funnel(rows: Row[], stages: Stage[]) {
+		const lost = new Set(stages.filter((s) => s.askReason).map((s) => s.id));
+		const total = rows.reduce((a, r) => a + r.count, 0);
+		const path = rows.filter((r) => !lost.has(r.stage));
+		const reached = path.map((_, i) => path.slice(i).reduce((a, r) => a + r.count, 0));
+		return {
+			total,
+			path: path.map((r, i) => ({
+				...r,
+				share: pct(r.count, total),
+				next: i < path.length - 1 ? pct(reached[i + 1], reached[i]) : null
+			})),
+			lost: rows.filter((r) => lost.has(r.stage)).map((r) => ({ ...r, share: pct(r.count, total) }))
+		};
+	}
 </script>
 
 <div class="mx-auto max-w-6xl space-y-4">
-	<div class="flex items-center justify-end">
-		<button class="btn-ghost" onclick={load} disabled={loading}>
+	<div class="flex items-center justify-between gap-3">
+		<p class="text-sm text-ink-soft">
+			Where contacts are now, per pipeline. Bars are a share of the pipeline's total; between
+			stages, the share of those who reached a stage that went on to the next.
+		</p>
+		<button class="btn-ghost shrink-0" onclick={load} disabled={loading}>
 			<RefreshCw class="h-4 w-4 {loading ? 'animate-spin' : ''}" /> Refresh
 		</button>
 	</div>
@@ -46,38 +71,47 @@
 
 	{#if summary && cfg.value}
 		{@const s = summary}
-		<div class="grid grid-cols-4 gap-3">
-			{#each [['New contacts (30 days)', s.kpis.newLast30], ['Needs attention', s.kpis.needsAttention], ['Open tasks', s.kpis.openTasks], ['Overdue tasks', s.kpis.overdueTasks]] as [label, value] (label)}
-				<div class="card px-4 py-3">
-					<div class="text-xs font-semibold text-ink-soft">{label}</div>
-					<div class="mt-1 text-2xl font-bold">{value}</div>
-				</div>
-			{/each}
-		</div>
-
 		<div class="grid grid-cols-4 gap-4">
 			{#each cfg.value.types as t (t)}
-				{@const rows = s.funnel[t]}
+				{@const f = funnel(s.funnel[t] ?? [], cfg.value.pipelines[t].stages)}
 				<section class="card px-4 py-3">
-					<div class="eyebrow">{cfg.value.pipelines[t].plural}</div>
-					<div class="mt-1 text-xs text-ink-soft">
-						{rows.reduce((a, r) => a + r.count, 0)} in total
+					<div class="flex items-baseline justify-between">
+						<div class="eyebrow">{cfg.value.pipelines[t].plural}</div>
+						<div class="text-xs text-ink-soft">{f.total} in total</div>
 					</div>
-					<ul class="mt-3 space-y-2">
-						{#each rows as r (r.stage)}
+					<ul class="mt-3">
+						{#each f.path as r (r.stage)}
 							<li>
-								<div class="flex justify-between text-xs">
-									<span>{r.label}</span><span class="font-semibold">{r.count}</span>
+								<div class="flex justify-between gap-2 text-xs">
+									<span>{r.label}</span>
+									<span class="shrink-0">
+										<span class="font-semibold">{r.count}</span>
+										<span class="text-ink-soft">· {r.share}%</span>
+									</span>
 								</div>
 								<div class="mt-0.5 h-2 rounded-full bg-primary-50">
-									<div
-										class="h-2 rounded-full bg-primary-600"
-										style="width: {(r.count / max(rows)) * 100}%"
-									></div>
+									<div class="h-2 rounded-full bg-primary-600" style="width: {r.share}%"></div>
 								</div>
+								{#if r.next !== null}
+									<div class="py-1 pl-2 text-[11px] text-ink-soft">↓ {r.next}% went on</div>
+								{/if}
 							</li>
 						{/each}
 					</ul>
+					{#each f.lost as r (r.stage)}
+						<div class="mt-3 border-t border-line/50 pt-2">
+							<div class="flex justify-between gap-2 text-xs">
+								<span>{r.label}</span>
+								<span class="shrink-0">
+									<span class="font-semibold">{r.count}</span>
+									<span class="text-ink-soft">· {r.share}%</span>
+								</span>
+							</div>
+							<div class="mt-0.5 h-2 rounded-full bg-canvas">
+								<div class="h-2 rounded-full bg-ink-soft/50" style="width: {r.share}%"></div>
+							</div>
+						</div>
+					{/each}
 				</section>
 			{/each}
 		</div>
@@ -87,7 +121,7 @@
 			<div class="mt-3 grid grid-cols-5 gap-3">
 				{#each s.sources as src (src.source)}
 					<div>
-						<div class="text-xs text-ink-soft capitalize">{src.source}</div>
+						<div class="text-xs text-ink-soft">{sourceLabel(src.source)}</div>
 						<div class="text-xl font-bold">{src.count}</div>
 					</div>
 				{/each}

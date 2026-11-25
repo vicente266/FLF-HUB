@@ -27,6 +27,8 @@ export interface ConnectionState {
 	settings?: Record<string, string>;
 	status?: Status;
 	detail?: string;
+	/** What to do about a failure, in plain words. */
+	hint?: string | null;
 	lastCheckAt?: unknown;
 	lastError?: string | null;
 	lastEventAt?: unknown;
@@ -41,6 +43,8 @@ export interface AutomationDef {
 	schedule?: string;
 	uses: string[];
 	defaultEnabled: boolean;
+	/** Turning it off is asked first, with this sentence. */
+	confirmOff?: string;
 }
 
 export type Level = 'ok' | 'warning' | 'error' | 'off';
@@ -54,6 +58,8 @@ export interface Health {
 		level: Level;
 		status: Status;
 		detail: string;
+		/** What to do, in plain words (detail is the technical answer). */
+		hint: string | null;
 		lastCheckAt: number | null;
 		lastEventAt: number | null;
 		lastSyncAt: number | null;

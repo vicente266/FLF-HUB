@@ -1,4 +1,5 @@
-import { callAction } from '$lib/actions';
+import { callAction, errorText } from '$lib/actions';
+import { toDate } from '$lib/utils';
 import type { CrmConfig, ContactType } from '$lib/types/crm';
 
 /** The CRM config, fetched once per session from `crm:config.get`. */
@@ -28,14 +29,41 @@ export function contactSubtitle(c: { type: string; name: string; company?: strin
 	return c.company ? c.name : '';
 }
 
+/** The open "why lost?" question, answered by `ReasonDialog` (mounted on the CRM and contact pages). */
+export const reasonAsk = $state<{
+	current: { stage: string; name: string; resolve: (r: string | null) => void } | null;
+}>({ current: null });
+
 /**
- * The reason for moving a contact to a losing stage (Lost, Declined): asked here, before the move.
- * '' for any other stage; null when the person cancels, so nothing moves.
+ * The reason for moving a contact to a losing stage (Lost, Declined): asked in a dialog, before the
+ * move. '' for any other stage; null when the person cancels, so nothing moves.
  */
-export function askReason(stage: { label: string; askReason?: boolean } | undefined, name: string) {
-	if (!stage?.askReason) return '';
-	const r = prompt(`Why is ${name} ${stage.label.toLowerCase()}? (optional, kept on the timeline)`);
-	return r === null ? null : r.trim().slice(0, 500);
+export function askReason(
+	stage: { label: string; askReason?: boolean } | undefined,
+	name: string
+): Promise<string | null> {
+	if (!stage?.askReason) return Promise.resolve('');
+	reasonAsk.current?.resolve(null);
+	return new Promise((resolve) => {
+		reasonAsk.current = { stage: stage.label, name, resolve };
+	});
+}
+
+/** The CRM list as last shown (tab, view, filters), so a contact's back link returns to it. */
+export const crmBack = $state({ href: '/crm' });
+
+/**
+ * Tick a task done (or not) from a list row. On failure the box goes back and the error is
+ * returned; null when it worked.
+ */
+export async function tickTask(id: string, box: HTMLInputElement): Promise<string | null> {
+	try {
+		await callAction('crm:task.done', { id, done: box.checked });
+		return null;
+	} catch (e) {
+		box.checked = !box.checked;
+		return errorText(e);
+	}
 }
 
 export function stageLabel(c: CrmConfig | null, type: ContactType, stage: string): string {
@@ -53,4 +81,34 @@ const TYPE_STYLES = [
 export function typeStyle(c: CrmConfig | null, type: ContactType): string {
 	const i = c?.types.indexOf(type) ?? -1;
 	return TYPE_STYLES[i >= 0 && i < TYPE_STYLES.length ? i : TYPE_STYLES.length - 1];
+}
+
+const DAY = 86_400_000;
+
+/** Whole days since a contact's last activity, or null when unknown. */
+export function daysQuiet(c: { lastActivityAt: unknown }, now = Date.now()): number | null {
+	const t = toDate(c.lastActivityAt)?.getTime();
+	return t ? Math.max(0, Math.floor((now - t) / DAY)) : null;
+}
+
+/**
+ * Needs attention, live: open and no activity for `staleDays` (the daily job's flag lags up to a
+ * day). Returns the days without activity, or null when it doesn't need attention.
+ */
+export function attentionDays(
+	c: { open: boolean; lastActivityAt: unknown },
+	staleDays: number,
+	now = Date.now()
+): number | null {
+	const d = daysQuiet(c, now);
+	return c.open && d !== null && d >= staleDays ? d : null;
+}
+
+/** "Website" for the stored "website": labels only, the value stays. */
+export const sourceLabel = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+/** "AB" for "Ana Bravo", for owner avatars. */
+export function initials(name: string | null | undefined): string {
+	const parts = (name ?? '').split(/[\s@.]+/).filter(Boolean);
+	return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?';
 }

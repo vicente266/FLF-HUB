@@ -49,16 +49,20 @@
 
 <div class="mx-auto max-w-4xl space-y-4">
 	<input
-		class="w-72 rounded-lg border border-line bg-white px-3 py-1.5 text-sm focus:ring-focus"
+		class="input w-72"
 		placeholder="Search a title or a person"
+		aria-label="Search meetings"
 		bind:value={search}
 	/>
 
 	{#if loading}
 		<p class="text-sm text-ink-soft">Loading…</p>
 	{:else if events.length === 0}
-		<Empty title="No events yet">
-			Meetings arrive with the FLF Portal sheet sync (Connections → FLF Portal sheet → Sync now).
+		<Empty title="No meetings yet">
+			Meetings with contacts come in from the team's calendars when the Portal is synced. To bring
+			them in now, open <a href="/connections" class="text-primary-700 hover:underline">
+				Connections
+			</a> and choose Sync now on the FLF Portal sheet.
 		</Empty>
 	{:else if filtered.length === 0}
 		<Empty title="No match">No meeting has that title or person.</Empty>

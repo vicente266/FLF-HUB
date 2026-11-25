@@ -35,17 +35,34 @@
 		type: 'other',
 		useWhen: '',
 		audience: 'internal',
-		reviewEvery: 6
+		reviewEvery: 6,
+		status: 'draft' as 'draft' | 'approved'
 	});
-	let approved = $derived(entry?.status === 'approved');
+	/** The draft as it opened, to tell unsaved edits (Modal asks before closing). */
+	let initial = $state('');
+	let dirty = $derived(open && initial !== '' && JSON.stringify(draft) !== initial);
+	let imported = $derived(entry?.source === 'drive');
+	let wasApproved = $derived(entry?.status === 'approved');
+	let approved = $derived(draft.status === 'approved');
+	/**
+	 * Saving an approved entry with a new text, title or type sends it back to draft (the backend
+	 * does it, docs/knowledge.md "The card").
+	 */
+	let backToDraft = $derived(
+		wasApproved &&
+			approved &&
+			((!imported &&
+				(draft.label.trim() !== (entry?.label ?? '') ||
+					draft.description.trim() !== (entry?.description ?? '').trim())) ||
+				draft.type !== (entry?.type ?? 'other'))
+	);
 	let saving = $state(false);
 	let error = $state<string | null>(null);
-	let imported = $derived(entry?.source === 'drive');
 
 	// Reset the draft each time the modal opens, for the entry it opens on.
 	$effect(() => {
 		if (open) {
-			draft = {
+			const d = {
 				label: entry?.label ?? '',
 				description: entry?.description ?? '',
 				expiredAt: entry?.expiredAt ?? '',
@@ -54,11 +71,21 @@
 				type: entry?.type ?? 'other',
 				useWhen: entry?.useWhen ?? '',
 				audience: entry?.audience ?? 'internal',
-				reviewEvery: entry?.reviewEvery ?? 6
+				reviewEvery: entry?.reviewEvery ?? 6,
+				status: entry?.status ?? 'draft'
 			};
+			draft = d;
+			// From the plain object: reading `draft` here would rerun this on every keystroke.
+			initial = JSON.stringify(d);
 			error = null;
 		}
 	});
+
+	/** Only an approved entry can be Always: back to draft, Claude reads it when relevant. */
+	function setStatus(status: 'draft' | 'approved') {
+		draft.status = status;
+		if (status === 'draft' && draft.use === 'always') draft.use = 'relevant';
+	}
 
 	/** Expiry set to yesterday: the entry is kept but no longer given to Claude. */
 	function markExpired() {
@@ -84,7 +111,9 @@
 				type: draft.type,
 				useWhen: draft.useWhen.trim(),
 				audience: draft.audience,
-				reviewEvery: Number(draft.reviewEvery)
+				reviewEvery: Number(draft.reviewEvery),
+				// The row's Approve sends the same: the backend stamps who approved and when.
+				status: draft.status
 			};
 			await callAction('core:knowledge.save', {
 				id: entry?.id ?? null,
@@ -101,7 +130,7 @@
 	}
 </script>
 
-<Modal bind:open title={entry ? 'Edit entry' : 'Add entry'} width="max-w-2xl">
+<Modal bind:open {dirty} title={entry ? 'Edit entry' : 'Add entry'} width="max-w-2xl">
 	<div class="space-y-3">
 		{#if imported}
 			<div class="rounded-lg bg-canvas px-3 py-2 text-sm">
@@ -120,7 +149,7 @@
 			</div>
 		{:else}
 			<div>
-				<label class="label" for="k-label">Label <span class="font-normal">(optional)</span></label>
+				<label class="label" for="k-label">Title <span class="font-normal">(optional)</span></label>
 				<input
 					id="k-label"
 					class="input"
@@ -130,7 +159,7 @@
 				/>
 			</div>
 			<div>
-				<label class="label" for="k-description">Description</label>
+				<label class="label" for="k-description">Text</label>
 				<textarea
 					id="k-description"
 					class="input"
@@ -154,7 +183,24 @@
 				One sentence: Claude reads the entry when the task matches it.
 			</p>
 		</div>
-		<div class="grid grid-cols-3 gap-3">
+		<div class="grid grid-cols-4 gap-3">
+			<div>
+				<label class="label" for="k-status">Status</label>
+				<select
+					id="k-status"
+					class="input"
+					value={draft.status}
+					onchange={(e) => setStatus(e.currentTarget.value as 'draft' | 'approved')}
+				>
+					<option value="draft">Draft</option>
+					<option value="approved">Approved</option>
+				</select>
+				<p class="mt-1 text-xs text-ink-soft">
+					{#if approved && !wasApproved}Approving here is the same as Approve on its row.{:else if approved}Approved{entry?.approvedBy
+							? ` by ${entry.approvedBy}`
+							: ''}.{:else}Claude says so when it relies on a draft.{/if}
+				</p>
+			</div>
 			<div>
 				<label class="label" for="k-type">Type</label>
 				<select id="k-type" class="input" bind:value={draft.type}>
@@ -211,6 +257,11 @@
 				</button>
 			</div>
 		</div>
+		{#if backToDraft}
+			<p class="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm" role="status">
+				Saving sends this back to draft; Claude stops reading it Always until you approve it again.
+			</p>
+		{/if}
 		<FormError message={error} />
 	</div>
 	{#snippet footer()}

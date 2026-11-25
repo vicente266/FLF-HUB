@@ -16,6 +16,8 @@ export interface AutomationDef {
 	uses: string[];
 	/** On until an admin turns it off. */
 	defaultEnabled: boolean;
+	/** Turning it off is asked first, with this sentence (what stops happening). */
+	confirmOff?: string;
 }
 
 export const AUTOMATIONS: AutomationDef[] = [
@@ -64,7 +66,9 @@ export const AUTOMATIONS: AutomationDef[] = [
 		trigger: 'schedule',
 		schedule: 'Every day at 03:00 (Madrid)',
 		uses: ['portal-sheet'],
-		defaultEnabled: false
+		defaultEnabled: false,
+		confirmOff:
+			'The portal sheet stops being imported every night: new contacts, tasks, meetings and check-ins from the portal won’t reach the Hub until it is on again (Sync now on Connections still works).'
 	},
 	{
 		id: 'knowledge-sync',
@@ -74,7 +78,9 @@ export const AUTOMATIONS: AutomationDef[] = [
 		trigger: 'schedule',
 		schedule: 'Every day at 03:00 (Madrid)',
 		uses: ['knowledge-folder'],
-		defaultEnabled: true
+		defaultEnabled: true,
+		confirmOff:
+			'The Knowledge folder stops being imported every night: changes in Drive won’t reach Claude until it is on again (Sync now on Knowledge still works).'
 	}
 ];
 

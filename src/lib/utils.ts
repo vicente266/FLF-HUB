@@ -76,11 +76,12 @@ const dateFmt = new Intl.DateTimeFormat('en-GB', {
 const dateTimeFmt = new Intl.DateTimeFormat('en-GB', {
 	day: 'numeric',
 	month: 'short',
+	year: 'numeric',
 	hour: '2-digit',
 	minute: '2-digit'
 });
 
-/** All user-facing dates go through these two. */
+/** All user-facing dates go through these (and `relative`; `When` shows both). */
 export function formatDate(value: unknown): string {
 	const d = toDate(value);
 	return d ? dateFmt.format(d) : '—';
@@ -101,4 +102,27 @@ export function relative(value: unknown): string {
 	if (abs < 3600_000) return rtf.format(Math.round(diff / 60_000), 'minute');
 	if (abs < 86_400_000) return rtf.format(Math.round(diff / 3600_000), 'hour');
 	return rtf.format(Math.round(diff / 86_400_000), 'day');
+}
+
+/** Elements Tab can reach. */
+export const FOCUSABLE =
+	'a[href], button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+
+/** Keep Tab / Shift+Tab inside `container` (a dialog or drawer); call it from a Tab keydown. */
+export function trapTab(container: HTMLElement, e: KeyboardEvent) {
+	const items = [...container.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+		(el) => el.offsetParent !== null
+	);
+	if (!items.length) return e.preventDefault();
+	const first = items[0];
+	const last = items[items.length - 1];
+	const current = document.activeElement;
+	const inside = container.contains(current);
+	if (e.shiftKey && (!inside || current === first || current === container)) {
+		e.preventDefault();
+		last.focus();
+	} else if (!e.shiftKey && (!inside || current === last)) {
+		e.preventDefault();
+		first.focus();
+	}
 }

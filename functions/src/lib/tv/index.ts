@@ -127,7 +127,9 @@ export const actions = {
 		videoStatuses: VIDEO_STATUSES,
 		clipStatuses: CLIP_STATUSES,
 		skills: SKILL_IDS,
-		defaultBrand: DEFAULT_BRAND
+		defaultBrand: DEFAULT_BRAND,
+		// Past this, a job the Mac holds counts as abandoned: Run again and Delete are allowed.
+		staleMs: STALE_MS
 	}),
 
 	'video.add': async (p: any, auth: any) => {
@@ -211,7 +213,14 @@ export const actions = {
 			if (!clip) throw new HttpsError('not-found', 'Clip not found.');
 			if (busy(clip, 'clip')) throw new HttpsError('failed-precondition', 'It is rendering now.');
 			const edits = await clipEdits(p, clip);
-			const visual = ['start', 'end', 'hook', 'focusX'].some((k) => k in edits);
+			// Only a real change to what is on screen renders it again (the screen sends every field).
+			const visual = ['start', 'end', 'hook', 'focusX'].some(
+				(k) =>
+					k in edits &&
+					(typeof edits[k] === 'number' && typeof clip[k] === 'number'
+						? Math.abs((edits[k] as number) - clip[k]) > 0.005
+						: edits[k] !== clip[k])
+			);
 			tx.update(ref, {
 				...edits,
 				...(visual && clip.status === 'rendered' ? { status: 'approved', renderUrl: null } : {}),

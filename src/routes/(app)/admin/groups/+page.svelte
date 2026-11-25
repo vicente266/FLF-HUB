@@ -8,11 +8,19 @@
 	import type { Group } from '$lib/types/crm';
 	import Modal from '$lib/components/shared/Modal.svelte';
 	import FormError from '$lib/components/shared/FormError.svelte';
+	import { loadPermissions, type PermissionInfo } from './permissions';
 
 	setTitle('Groups', 'Sets of permissions. A user can do everything any of their groups allows.');
 
 	let groups = $state<Group[]>([]);
-	let permissions = $state<string[]>([]);
+	let catalog = $state<PermissionInfo[]>([]);
+	/** The permissions grouped by app, in the backend's order. */
+	let byApp = $derived(
+		[...new Set(catalog.map((p) => p.app))].map((app) => ({
+			app,
+			items: catalog.filter((p) => p.app === app)
+		}))
+	);
 	let error = $state<string | null>(null);
 	let editing = $state(false);
 	let draft = $state<{
@@ -28,9 +36,9 @@
 	});
 
 	onMount(() => {
-		callAction<{ permissions: string[] }>('core:config.get').then(
-			(r) => (permissions = r.permissions)
-		);
+		loadPermissions()
+			.then((c) => (catalog = c))
+			.catch((e) => (error = errorText(e)));
 		return listen<Group>(query(collection(db, 'group'), orderBy('name')), (r) => (groups = r));
 	});
 
@@ -43,6 +51,7 @@
 					permissions: [...g.permissions]
 				}
 			: { id: null, name: '', description: '', permissions: [] };
+		initial = snapshot(draft);
 		error = null;
 		editing = true;
 	}
@@ -70,11 +79,18 @@
 		}
 	}
 
-	/** `crm.any.write` → `CRM — Write` */
-	function pretty(p: string) {
-		const [feature, , ...rest] = p.split('.');
-		return `${feature.toUpperCase() === 'CRM' ? 'CRM' : feature[0].toUpperCase() + feature.slice(1)} — ${rest.join(' ')}`;
-	}
+	/** A permission's label, or its id when the backend doesn't know it any more. */
+	const labelOf = (id: string) => catalog.find((p) => p.id === id)?.label ?? id;
+	/** Unsaved edits in the dialog (it asks before closing). */
+	const snapshot = (d: typeof draft) =>
+		JSON.stringify({
+			name: d.name,
+			description: d.description,
+			permissions: [...d.permissions].sort()
+		});
+	/** The dialog as it opened, to tell unsaved edits (it asks before closing). */
+	let initial = $state('');
+	let dirty = $derived(editing && snapshot(draft) !== initial);
 </script>
 
 <div class="mx-auto max-w-4xl space-y-3">
@@ -90,7 +106,7 @@
 					{#each g.permissions as p (p)}<span
 							class="rounded bg-primary-50 px-1.5 py-0.5 text-[11px] text-primary-700"
 						>
-							{pretty(p)}
+							{labelOf(p)}
 						</span>{/each}
 				</div>
 			</button>
@@ -98,9 +114,8 @@
 	</div>
 </div>
 
-<Modal bind:open={editing} title={draft.id ? 'Edit group' : 'New group'}>
+<Modal bind:open={editing} {dirty} title={draft.id ? 'Edit group' : 'New group'} width="max-w-2xl">
 	<div class="space-y-3">
-		<FormError message={error} />
 		<div>
 			<label class="label" for="gname">Name</label>
 			<input id="gname" class="input" bind:value={draft.name} />
@@ -111,20 +126,36 @@
 		</div>
 		<div>
 			<div class="label">Permissions</div>
-			<div class="grid grid-cols-2 gap-1">
-				{#each permissions as p (p)}
-					<label class="flex items-center gap-2 text-sm">
-						<input
-							type="checkbox"
-							class="rounded text-primary-600"
-							value={p}
-							bind:group={draft.permissions}
-						/>
-						{pretty(p)}
-					</label>
+			<div class="max-h-[55vh] space-y-3 overflow-y-auto pr-1">
+				{#each byApp as g (g.app)}
+					<fieldset>
+						<legend class="text-xs font-bold text-ink">{g.app}</legend>
+						<div class="mt-1 space-y-1">
+							{#each g.items as p (p.id)}
+								<label class="flex items-start gap-2 text-sm">
+									<input
+										type="checkbox"
+										class="mt-0.5 rounded text-primary-600"
+										value={p.id}
+										bind:group={draft.permissions}
+									/>
+									<span class="min-w-0">
+										<span class="font-medium">{p.label}</span>
+										{#if p.adminsNeedIt}<span
+												class="ml-1 rounded bg-warning/10 px-1.5 py-0.5 text-[11px] font-semibold text-warning"
+											>
+												Admins need this too
+											</span>{/if}
+										{#if p.help}<span class="block text-xs text-ink-soft">{p.help}</span>{/if}
+									</span>
+								</label>
+							{/each}
+						</div>
+					</fieldset>
 				{/each}
 			</div>
 		</div>
+		<FormError message={error} />
 	</div>
 	{#snippet footer()}
 		{#if draft.id}<button class="mr-auto btn-ghost text-danger" onclick={remove}>

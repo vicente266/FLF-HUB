@@ -12,7 +12,7 @@ import { dispatch } from './dispatch';
 import * as utils from './lib/utils';
 import * as user from './lib/user';
 import * as group from './lib/group';
-import { PERMISSIONS } from './lib/permissions';
+import { PERMISSIONS, PERMISSION_CATALOG } from './lib/permissions';
 import * as crm from './lib/crm/index';
 import * as automations from './lib/automations/index';
 import * as connections from './lib/connections/index';
@@ -78,7 +78,10 @@ export const coreAction = onCall(
 			}
 		},
 		/** Every permission a group can grant, for Admin → Groups. */
-		'config.get': { adminOnly: true, handler: async () => ({ permissions: PERMISSIONS }) },
+		'config.get': {
+			adminOnly: true,
+			handler: async () => ({ permissions: PERMISSIONS, catalog: PERMISSION_CATALOG })
+		},
 		/** Change a user's role, groups and Sherpa flag. */
 		'user.update': {
 			adminOnly: true,
@@ -204,6 +207,10 @@ export const crmAction = onCall(
 		'note.add': { ...crmWrite, handler: crm.actions['note.add'] },
 		/** Create a task on a contact. */
 		'task.create': { ...crmWrite, handler: crm.actions['task.create'] },
+		/** Change a task's title, due date or assignee. */
+		'task.update': { ...crmWrite, handler: crm.actions['task.update'] },
+		/** Delete a task (not one from the portal sheet). */
+		'task.delete': { ...crmWrite, handler: crm.actions['task.delete'] },
 		/** Mark a task done or not done. */
 		'task.done': { ...crmWrite, handler: crm.actions['task.done'] }
 	})
@@ -214,7 +221,7 @@ export const reportsAction = onCall(
 	dispatch('reports', {
 		/** Pipeline funnel, sources and KPIs from the CRM. */
 		summary: { permission: 'reports.any.read', handler: reports.actions.summary },
-		/** Just the four headline numbers, for Home. */
+		/** The caller's four headline numbers, for Home. */
 		kpis: { permission: 'reports.any.read', handler: reports.actions.kpis }
 	})
 );

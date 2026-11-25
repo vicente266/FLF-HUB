@@ -7,16 +7,26 @@ thumbnail. **The Hub holds the queue, the Skill and the outcome; the Mac does th
 ## In the Hub (`/tv`, permissions `tv.any.read` / `tv.any.write`)
 
 - **Upload**: send a Google Drive link. The four steps show live: ① Transcript → ② Pauses +
-  transcript → ③ Topics and clips → ④ Cuts, subtitles, covers.
+  transcript → ③ Topics and clips → ④ Cuts, subtitles, covers. While a video is queued or
+  processing, a banner says since when it waits and the last activity (`updatedAt`, the worker's
+  heartbeat); quiet for over 10 minutes it asks whether the Mac is on. **Run again** (confirmed in
+  the page: the suggested clips and edits to them are replaced, approved and rendered clips stay)
+  and Delete show unless the Mac holds the video, or once that job is past `STALE_MS` (sent by
+  `tv.config.get` as `staleMs`).
 - **Skill**: two editable skills the Mac reads on every video.
   - _Clipping_: what makes a good FLF clip, and above all **where to cut** (a new topic after a
     pause; the end right after the payoff, before a pause).
-  - _Brand and covers_: the look, the best-frame rule for covers, and the renderer settings
-    (colours, sizes, clip length, clips per video, auto-render, the Drive output folder).
+  - _Brand and covers_: the look and the best-frame rule for covers in words, and the renderer
+    settings (colours, sizes, clip length, clips per video, auto-render, the Drive output folder).
+    Numbers and colours live only in the settings, never in the text, so the two can't disagree.
     The answer format is appended in code, so editing a skill can't break the parsing.
+  - Save stays at the bottom of the card; leaving the page with unsaved edits asks first.
 - **Outcome**: per video, the topic map with times and every clip: hook, caption, hashtags, where
   each edge was cut (inside an N s pause, or on a word when there was none), and links to the clip,
-  cover and thumbnail. Edit (times, hook, caption, framing) re-renders; reject drops it.
+  cover and thumbnail. Edit: times as m:ss.s (plain seconds work too) with the length shown;
+  changing the times, hook or framing renders a rendered clip again, caption and hashtags don't
+  (`clip.update` compares with the stored values). Reject drops it; a failed clip shows its error
+  under its title and **Render again**.
 
 Claude does the same through the connector: `flf_tv_list`, `flf_tv_add_video`,
 `flf_tv_update_clip`, `flf_tv_set_clip_status`, `flf_tv_get_skill`, `flf_tv_save_skill`.

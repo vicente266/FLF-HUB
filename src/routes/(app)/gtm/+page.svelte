@@ -12,6 +12,8 @@
 	import Modal from '$lib/components/shared/Modal.svelte';
 	import FormError from '$lib/components/shared/FormError.svelte';
 	import Empty from '$lib/components/shared/Empty.svelte';
+	import NewContactDialog from '$lib/components/crm/NewContactDialog.svelte';
+	import Building from '@lucide/svelte/icons/building-2';
 
 	setTitle('Go-to-market', 'Strategies and the organisations we reach out to');
 
@@ -73,6 +75,7 @@
 	let editOpen = $state(false);
 	let editId = $state<string | null>(null);
 	let draft = $state({ name: '', segment: '', status: 'active', description: '' });
+	let pristine = $state('');
 	let saving = $state(false);
 	let formError = $state<string | null>(null);
 	function edit(s: Strategy | null) {
@@ -83,14 +86,20 @@
 			status: s?.status ?? 'active',
 			description: s?.description ?? ''
 		};
+		pristine = JSON.stringify(draft);
 		formError = null;
 		editOpen = true;
 	}
+
+	// "Add organisation": a new Partner, already in this strategy.
+	let adding = $state(false);
+	let addTo = $state('');
+	function addOrganisation(s: Strategy | null) {
+		addTo = s?.id ?? '';
+		adding = true;
+	}
 	async function save() {
-		if (!draft.name.trim()) {
-			formError = 'Give the strategy a name.';
-			return;
-		}
+		if (!draft.name.trim()) return;
 		saving = true;
 		formError = null;
 		try {
@@ -115,10 +124,12 @@
 </script>
 
 <div class="mx-auto max-w-6xl space-y-4">
-	<div class="flex items-center justify-between">
-		<p class="text-sm text-ink-soft">
-			Organisations are Partners in the <a href="/crm" class="text-primary-700">CRM</a>: add them
-			there (type Partner), with their segment and strategy. Discussion notes go on their timeline.
+	<div class="flex items-center justify-between gap-4">
+		<p class="min-w-0 flex-1 text-sm text-ink-soft">
+			Organisations are Partners in the <a href="/crm?type=partner" class="text-primary-700">
+				CRM
+			</a>. Add one to a strategy with its Add organisation button; discussion notes go on its
+			timeline.
 		</p>
 		<div class="flex shrink-0 items-center gap-2">
 			{#if doneCount}
@@ -173,18 +184,23 @@
 						<p class="mt-1 text-sm whitespace-pre-line text-ink-soft">{s.description}</p>
 					{/if}
 				</div>
-				{#if s && canWrite}
-					<div class="flex shrink-0 gap-1">
-						<button class="btn-ghost px-2" aria-label="Edit" onclick={() => edit(s)}>
-							<Pencil class="h-4 w-4" />
+				{#if canWrite}
+					<div class="flex shrink-0 items-center gap-1">
+						<button class="btn-ghost whitespace-nowrap" onclick={() => addOrganisation(s)}>
+							<Building class="h-4 w-4" /> Add organisation
 						</button>
-						<button
-							class="btn-ghost px-2 text-danger"
-							aria-label="Delete"
-							onclick={() => remove(s)}
-						>
-							<Trash class="h-4 w-4" />
-						</button>
+						{#if s}
+							<button class="btn-ghost px-2" aria-label="Edit" onclick={() => edit(s)}>
+								<Pencil class="h-4 w-4" />
+							</button>
+							<button
+								class="btn-ghost px-2 text-danger"
+								aria-label="Delete"
+								onclick={() => remove(s)}
+							>
+								<Trash class="h-4 w-4" />
+							</button>
+						{/if}
 					</div>
 				{/if}
 			</div>
@@ -244,15 +260,18 @@
 					</tbody>
 				</table>
 			{:else}
-				<p class="px-4 py-3 text-sm text-ink-soft">
-					No organisations yet. Add a Partner in the CRM and pick this strategy.
-				</p>
+				<p class="px-4 py-3 text-sm text-ink-soft">No organisations yet.</p>
 			{/if}
 		</section>
 	{/each}
 </div>
 
-<Modal bind:open={editOpen} title={editId ? 'Edit strategy' : 'New strategy'} width="max-w-2xl">
+<Modal
+	bind:open={editOpen}
+	title={editId ? 'Edit strategy' : 'New strategy'}
+	width="max-w-2xl"
+	dirty={JSON.stringify(draft) !== pristine}
+>
 	<div class="grid grid-cols-2 gap-3">
 		<div class="col-span-2">
 			<label class="label" for="s-name">Name</label>
@@ -292,9 +311,13 @@
 	<FormError message={formError} />
 	{#snippet footer()}
 		<button class="btn-ghost" onclick={() => (editOpen = false)}>Cancel</button>
-		<button class="btn-primary" disabled={saving} onclick={save}>
+		<button class="btn-primary" disabled={saving || !draft.name.trim()} onclick={save}>
 			<Save class="h-4 w-4" />
 			{saving ? 'Saving…' : 'Save'}
 		</button>
 	{/snippet}
 </Modal>
+
+{#if canWrite && cfg.value}
+	<NewContactDialog bind:open={adding} config={cfg.value} type="partner" strategyId={addTo} />
+{/if}

@@ -9,6 +9,7 @@
 	import { hasPermission, listen, setTitle, formatDateTime } from '$lib/utils';
 	import type { AutomationDef } from '$lib/types/connections';
 	import FormError from '$lib/components/shared/FormError.svelte';
+	import Modal from '$lib/components/shared/Modal.svelte';
 
 	setTitle('Automations', 'What the Hub does on its own');
 
@@ -54,28 +55,38 @@
 	}
 	let n8n = $state<N8nWorkflow[] | null>(null);
 	let n8nError = $state<string | null>(null);
+	/** No n8n API key yet: one notice for the whole n8n section, not one per card. */
+	let n8nMissing = $state(false);
 	// Inactive ones (old tests, retired flows) hidden unless asked for.
 	let showInactive = $state(false);
 	function loadN8n() {
 		n8nError = null;
+		n8nMissing = false;
 		callAction<{ workflows: N8nWorkflow[] }>('automations:n8n.workflows')
 			.then((r) => (n8n = r.workflows))
-			.catch((e) => (n8nError = errorText(e)));
+			.catch((e) => {
+				n8nError = errorText(e);
+				n8nMissing = (e as { code?: string })?.code === 'functions/failed-precondition';
+			});
 	}
 	const RUN_TONE: Record<string, string> = {
 		success: 'bg-success',
 		error: 'bg-danger',
 		crashed: 'bg-danger',
 		running: 'bg-primary-500',
-		waiting: 'bg-amber-400'
+		waiting: 'bg-warning'
 	};
 
+	let connectionNames = $state<Record<string, string>>({});
 	onMount(() => {
-		callAction<{ automations: AutomationDef[]; n8n: N8nAutomation[] }>(
-			'automations:config.get'
-		).then((r) => {
+		callAction<{
+			automations: AutomationDef[];
+			n8n: N8nAutomation[];
+			connections: { id: string; name: string }[];
+		}>('automations:config.get').then((r) => {
 			defs = r.automations;
 			n8nDefs = r.n8n;
+			connectionNames = Object.fromEntries(r.connections.map((c) => [c.id, c.name]));
 		});
 		loadN8n();
 		const unsubs = [
@@ -94,12 +105,40 @@
 	const isOn = (d: AutomationDef) => states[d.id]?.enabled ?? d.defaultEnabled;
 	const name = (id: string) => defs.find((d) => d.id === id)?.name ?? id;
 
-	async function toggle(d: AutomationDef) {
+	/** "Turned off" / "Turned on" under the switch for a few seconds. */
+	let flash = $state<Record<string, string>>({});
+	let switching = $state<string | null>(null);
+	/** Returns the error, or null once switched. */
+	async function setOn(d: AutomationDef, enabled: boolean): Promise<string | null> {
+		switching = d.id;
 		try {
-			await callAction('automations:toggle', { id: d.id, enabled: !isOn(d) });
+			await callAction('automations:toggle', { id: d.id, enabled });
+			flash[d.id] = enabled ? 'Turned on' : 'Turned off';
+			setTimeout(() => delete flash[d.id], 3000);
+			return null;
 		} catch (e) {
-			error = errorText(e);
+			return errorText(e);
+		} finally {
+			switching = null;
 		}
+	}
+	// Turning off a scheduled import is asked first.
+	let offOpen = $state(false);
+	let offDef = $state<AutomationDef | null>(null);
+	let offError = $state<string | null>(null);
+	async function toggle(d: AutomationDef) {
+		if (isOn(d) && d.confirmOff) {
+			offDef = d;
+			offError = null;
+			offOpen = true;
+			return;
+		}
+		error = await setOn(d, !isOn(d));
+	}
+	async function turnOff() {
+		if (!offDef) return;
+		offError = await setOn(offDef, false);
+		if (!offError) offOpen = false;
 	}
 
 	const TRIGGER = {
@@ -130,9 +169,12 @@
 						role="switch"
 						aria-checked={isOn(d)}
 						aria-label="Toggle {d.name}"
-						disabled={!canWrite}
+						disabled={!canWrite || switching === d.id}
+						title={canWrite ? '' : 'Only people who can change automations can switch this'}
 						onclick={() => toggle(d)}
-						class="relative h-5 w-9 shrink-0 rounded-full transition {isOn(d)
+						class="relative h-5 w-9 shrink-0 rounded-full transition focus:ring-2 focus:ring-focus focus:outline-none disabled:opacity-50 {isOn(
+							d
+						)
 							? 'bg-primary-600'
 							: 'bg-line'}"
 					>
@@ -143,11 +185,20 @@
 						></span>
 					</button>
 				</div>
+				{#if flash[d.id]}<p
+						class="mt-1 text-right text-xs font-semibold text-primary-700"
+						role="status"
+					>
+						{flash[d.id]}
+					</p>{/if}
 				<p class="mt-2 flex-1 text-sm text-ink-soft">{d.description}</p>
 				{#if d.uses.length}
 					<p class="mt-2 text-xs text-ink-soft">
-						Uses: {#each d.uses as u, i (u)}<a href="/connections" class="text-primary-700">
-								{u}
+						Uses: {#each d.uses as u, i (u)}<a
+								href="/connections?open={u}"
+								class="text-primary-700 hover:underline"
+							>
+								{connectionNames[u] ?? u}
 							</a>{i < d.uses.length - 1 ? ', ' : ''}{/each}
 					</p>
 				{/if}
@@ -167,6 +218,26 @@
 
 	{#if n8nDefs.length}
 		<h2 class="pt-2 text-sm font-bold text-ink-soft">Run by n8n · read only here</h2>
+		{#if n8nError}
+			<div
+				class="rounded-xl border border-warning/40 bg-warning/10 px-4 py-2.5 text-sm"
+				role="status"
+			>
+				{#if n8nMissing}
+					<strong>n8n isn’t connected yet.</strong> The workflows below run in n8n; their status
+					shows here once
+					<a href="/connections?open=n8n" class="font-semibold text-primary-700 hover:underline">
+						the n8n connection
+					</a> is set up.
+				{:else}
+					<strong>Can’t read n8n right now.</strong>
+					{n8nError}
+					<button class="ml-1 font-semibold text-primary-700 hover:underline" onclick={loadN8n}>
+						Try again
+					</button>
+				{/if}
+			</div>
+		{/if}
 		<div class="grid grid-cols-2 gap-3">
 			{#each n8nDefs as a (a.name)}
 				{@const w = n8n?.find((x) => x.id === a.workflowId)}
@@ -193,7 +264,7 @@
 					<p class="mt-2 flex-1 text-sm text-ink-soft">{a.description}</p>
 					<div class="mt-3 flex justify-between border-t border-line/50 pt-2 text-xs text-ink-soft">
 						{#if !n8n}
-							<span>{n8nError ? "Can't reach n8n. Check it on Health." : 'Reading n8n…'}</span>
+							<span>{n8nError ? 'Status not available' : 'Reading n8n…'}</span>
 						{:else if !w}
 							<span class="text-danger">
 								Not found in n8n. It may have been renamed or deleted.
@@ -215,69 +286,67 @@
 		</div>
 	{/if}
 
-	<section class="card">
-		<div class="flex items-center justify-between border-b border-line/60 px-4 py-3">
-			<div>
-				<span class="font-bold">FLF n8n workflows</span>
-				{#if n8n}<span class="ml-2 text-xs text-ink-soft">
-						{n8n.filter((w) => w.active).length} active of {n8n.length} · read only
-					</span>{/if}
+	{#if !n8nError}<section class="card">
+			<div class="flex items-center justify-between border-b border-line/60 px-4 py-3">
+				<div>
+					<span class="font-bold">FLF n8n workflows</span>
+					{#if n8n}<span class="ml-2 text-xs text-ink-soft">
+							{n8n.filter((w) => w.active).length} active of {n8n.length} · read only
+						</span>{/if}
+				</div>
+				<div class="flex items-center gap-3">
+					<label class="flex items-center gap-1.5 text-xs text-ink-soft">
+						<input type="checkbox" bind:checked={showInactive} /> Show inactive
+					</label>
+					<button class="btn-ghost text-xs" onclick={loadN8n}>Refresh</button>
+				</div>
 			</div>
-			<div class="flex items-center gap-3">
-				<label class="flex items-center gap-1.5 text-xs text-ink-soft">
-					<input type="checkbox" bind:checked={showInactive} /> Show inactive
-				</label>
-				<button class="btn-ghost text-xs" onclick={loadN8n}>Refresh</button>
-			</div>
-		</div>
-		{#if n8nError}
-			<p class="px-4 py-4 text-sm text-danger">{n8nError}</p>
-		{:else if !n8n}
-			<p class="px-4 py-4 text-sm text-ink-soft">Reading n8n…</p>
-		{:else}
-			<ul class="divide-y divide-line/40">
-				{#each n8n.filter((w) => showInactive || w.active) as w (w.id)}
-					<li class="flex items-center gap-3 px-4 py-2 text-sm">
-						<span
-							class="h-2 w-2 shrink-0 rounded-full {w.active ? 'bg-success' : 'bg-line'}"
-							title={w.active ? 'Active' : 'Inactive'}
-						></span>
-						<a
-							href={w.url}
-							target="_blank"
-							rel="noopener noreferrer"
-							class="flex min-w-0 flex-1 items-center gap-1 font-medium hover:text-primary-700"
-						>
-							<span class="truncate">{w.name}</span>
-							<ExternalLink class="h-3 w-3 shrink-0 text-ink-soft" />
-						</a>
-						<span class="w-20 shrink-0 text-xs text-ink-soft">
-							{w.active ? 'Active' : 'Inactive'}
-						</span>
-						<span class="flex w-44 shrink-0 items-center gap-1.5 text-xs text-ink-soft">
-							{#if w.lastRun}
-								<span class="h-1.5 w-1.5 rounded-full {RUN_TONE[w.lastRun.status] ?? 'bg-line'}"
-								></span>
-								{w.lastRun.status} · {formatDateTime(w.lastRun.at)}
-							{:else}
-								No saved run
-							{/if}
-						</span>
-						<span
-							class="w-28 shrink-0 text-right text-xs {w.errors24h
-								? 'font-semibold text-danger'
-								: 'text-ink-soft'}"
-							title={w.lastErrorAt ? `Last failure ${formatDateTime(w.lastErrorAt)}` : ''}
-						>
-							{w.errors24h ? `${w.errors24h} failed (24h)` : 'No failures'}
-						</span>
-					</li>
-				{:else}
-					<li class="px-4 py-4 text-sm text-ink-soft">No workflows.</li>
-				{/each}
-			</ul>
-		{/if}
-	</section>
+			{#if !n8n}
+				<p class="px-4 py-4 text-sm text-ink-soft">Reading n8n…</p>
+			{:else}
+				<ul class="divide-y divide-line/40">
+					{#each n8n.filter((w) => showInactive || w.active) as w (w.id)}
+						<li class="flex items-center gap-3 px-4 py-2 text-sm">
+							<span
+								class="h-2 w-2 shrink-0 rounded-full {w.active ? 'bg-success' : 'bg-line'}"
+								title={w.active ? 'Active' : 'Inactive'}
+							></span>
+							<a
+								href={w.url}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="flex min-w-0 flex-1 items-center gap-1 font-medium hover:text-primary-700"
+							>
+								<span class="truncate">{w.name}</span>
+								<ExternalLink class="h-3 w-3 shrink-0 text-ink-soft" />
+							</a>
+							<span class="w-20 shrink-0 text-xs text-ink-soft">
+								{w.active ? 'Active' : 'Inactive'}
+							</span>
+							<span class="flex w-44 shrink-0 items-center gap-1.5 text-xs text-ink-soft">
+								{#if w.lastRun}
+									<span class="h-1.5 w-1.5 rounded-full {RUN_TONE[w.lastRun.status] ?? 'bg-line'}"
+									></span>
+									{w.lastRun.status} · {formatDateTime(w.lastRun.at)}
+								{:else}
+									No saved run
+								{/if}
+							</span>
+							<span
+								class="w-28 shrink-0 text-right text-xs {w.errors24h
+									? 'font-semibold text-danger'
+									: 'text-ink-soft'}"
+								title={w.lastErrorAt ? `Last failure ${formatDateTime(w.lastErrorAt)}` : ''}
+							>
+								{w.errors24h ? `${w.errors24h} failed (24h)` : 'No failures'}
+							</span>
+						</li>
+					{:else}
+						<li class="px-4 py-4 text-sm text-ink-soft">No workflows.</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>{/if}
 
 	<section class="card">
 		<div class="border-b border-line/60 px-4 py-3 font-bold">Recent runs</div>
@@ -300,3 +369,12 @@
 		</ul>
 	</section>
 </div>
+
+<Modal bind:open={offOpen} title="Turn off {offDef?.name ?? ''}?" width="max-w-md">
+	{#if offDef}<p class="text-sm">{offDef.confirmOff}</p>{/if}
+	{#if offError}<div class="mt-3"><FormError message={offError} /></div>{/if}
+	{#snippet footer()}
+		<button class="btn-ghost" onclick={() => (offOpen = false)}>Keep it on</button>
+		<button class="btn-primary" disabled={switching !== null} onclick={turnOff}>Turn off</button>
+	{/snippet}
+</Modal>

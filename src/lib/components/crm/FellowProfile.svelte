@@ -8,8 +8,8 @@
 	import type { CalendarEvent, Contact, Task } from '$lib/types/crm';
 	import Modal from '$lib/components/shared/Modal.svelte';
 
-	// One Fellow at a glance: stats, meetings, health (PERMA) and money, from the Hub and the portal
-	// sheet. Health and money load through their own actions, only for people allowed to see them;
+	// One Fellow at a glance: stats, meetings, wellbeing (PERMA) and money, from the Hub and the portal
+	// sheet. Wellbeing and money load through their own actions, only for people allowed to see them;
 	// none of it is ever given to Claude.
 	let { open = $bindable(false), contact }: { open: boolean; contact: Contact } = $props();
 
@@ -28,13 +28,13 @@
 		reports?: Record<string, Record<string, { gross: number; net: number; value: number }>>;
 	}
 
-	let tab = $state<'overview' | 'meetings' | 'health' | 'money'>('overview');
+	let tab = $state<'overview' | 'meetings' | 'wellbeing' | 'money'>('overview');
 	let meetings = $state<CalendarEvent[]>([]);
 	let tasks = $state<Task[]>([]);
 	// undefined = loading, null = none / failed.
 	let perma = $state<Perma[] | null | undefined>(undefined);
 	let money = $state<Finance | null | undefined>(undefined);
-	let healthError = $state<string | null>(null);
+	let wellbeingError = $state<string | null>(null);
 	let moneyError = $state<string | null>(null);
 	let loadError = $state<string | null>(null);
 
@@ -51,7 +51,7 @@
 		meetings = [];
 		tasks = [];
 		loadError = null;
-		healthError = null;
+		wellbeingError = null;
 		moneyError = null;
 		if (canWellbeing)
 			callAction<Perma[]>('portal:wellbeing.get', { contactId: cid })
@@ -59,7 +59,7 @@
 				.catch((e) => {
 					if (!alive) return;
 					perma = null;
-					healthError = errorText(e);
+					wellbeingError = errorText(e);
 				});
 		if (canWealth)
 			callAction<Finance | null>('portal:finance.get', { contactId: cid })
@@ -138,8 +138,8 @@
 </script>
 
 <Modal bind:open title={`${contactTitle(contact)} · Fellow profile`} width="max-w-3xl">
-	<div class="-mt-1 mb-4 flex w-fit rounded-lg border border-line/70 bg-white p-0.5">
-		{#each [['overview', 'Overview'], ['meetings', `Meetings (${meetings.length})`], ...(canWellbeing ? [['health', 'Health']] : []), ...(canWealth ? [['money', 'Finance']] : [])] as [value, label] (value)}
+	<div class="-mt-1 mb-4 flex w-fit flex-wrap rounded-lg border border-line/70 bg-white p-0.5">
+		{#each [['overview', 'Overview'], ['meetings', `Meetings (${meetings.length})`], ...(canWellbeing ? [['wellbeing', 'Wellbeing']] : []), ...(canWealth ? [['money', 'Finance']] : [])] as [value, label] (value)}
 			<button
 				class="rounded-md px-3 py-1 text-sm font-semibold {tab === value
 					? 'bg-primary-600 text-white'
@@ -154,7 +154,7 @@
 	{#if loadError}<p class="mb-3 text-sm text-danger">{loadError}</p>{/if}
 
 	{#if tab === 'overview'}
-		<div class="grid grid-cols-4 gap-3">
+		<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
 			{#each [['Stage', cfg.value ? stageLabel(cfg.value, contact.type, contact.stage) : contact.stage], ['Days in stage', daysInStage ?? '—'], ['Meetings (90 days)', meetings90], ['Open tasks', openTasks.length]] as [label, value] (label)}
 				<div class="rounded-lg bg-canvas px-3 py-2">
 					<div class="text-[11px] font-semibold text-ink-soft">{label}</div>
@@ -163,8 +163,8 @@
 			{/each}
 		</div>
 
-		<dl class="mt-4 grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
-			{#each [['Cohort', pt?.cohort], ['Sherpa', contact.ownerName || pt?.sherpaName], ['Archetype', pt?.archetype], ['Location', pt?.location], ['Company', contact.company], ['Funnel stage', pt?.funnelStage], ['Next step', nextStepLabel(contact.nextStep)], ['Last meeting', lastMeeting ? `${formatDate(lastMeeting.date)} · ${lastMeeting.title}` : ''], ['Last activity', relative(contact.lastActivityAt)], ['Last interaction (portal)', pt?.lastInteraction ? formatDate(pt.lastInteraction) : ''], ['Portal access', pt?.onPortal == null ? '' : pt.onPortal ? 'Yes' : 'No']] as [label, value] (label)}
+		<dl class="mt-4 grid grid-cols-1 gap-x-8 gap-y-2 text-sm md:grid-cols-2">
+			{#each [['Cohort', pt?.cohort], ['Sherpa', contact.ownerName || pt?.sherpaName], ['Archetype', pt?.archetype], ['Location', pt?.location], ['Company', contact.company], ['Funnel stage', pt?.funnelStage], ['Next step', nextStepLabel(contact.nextStep)], ['Last meeting', lastMeeting ? `${formatDate(lastMeeting.date)} · ${lastMeeting.name ?? lastMeeting.title}` : ''], ['Last activity', relative(contact.lastActivityAt)], ['Last interaction (portal)', pt?.lastInteraction ? formatDate(pt.lastInteraction) : ''], ['Portal access', pt?.onPortal == null ? '' : pt.onPortal ? 'Yes' : 'No']] as [label, value] (label)}
 				<div class="flex justify-between gap-3 border-b border-line/40 py-1">
 					<dt class="text-ink-soft">{label}</dt>
 					<dd class="truncate text-right font-medium">{value || '—'}</dd>
@@ -179,7 +179,7 @@
 					{#if pt?.pledgeSigned === true}Signed{pt.pledgeDate
 							? ` on ${formatDate(pt.pledgeDate)}`
 							: ''}{:else if pt?.pledgeSigned === false}Not signed yet{:else}No pledge data from the
-						portal{/if}
+						Portal{/if}
 				</span>
 				{#if pt?.contractUrl}
 					<a
@@ -223,8 +223,8 @@
 							{formatDate(m.date)}
 						</span>
 						<span class="min-w-0 flex-1">
-							{m.title}
-							{#if m.type}<span class="text-xs text-ink-soft"> · {m.type}</span>{/if}
+							{m.name ?? m.title}
+							{#if m.type && !m.name}<span class="text-xs text-ink-soft"> · {m.type}</span>{/if}
 							<span class="block text-xs text-ink-soft">
 								{m.participants.map((p) => p.name).join(', ')}
 							</span>
@@ -233,15 +233,13 @@
 				{/each}
 			</ul>
 		{:else}
-			<p class="text-sm text-ink-soft">
-				No meetings yet. They come from the calendars through the portal sheet sync.
-			</p>
+			<p class="text-sm text-ink-soft">No meetings yet. They are synced from the Portal.</p>
 		{/if}
-	{:else if tab === 'health'}
+	{:else if tab === 'wellbeing'}
 		{#if perma === undefined}
 			<p class="text-sm text-ink-soft">Loading…</p>
-		{:else if healthError}
-			<p class="text-sm text-danger">Couldn't load the check-ins: {healthError}</p>
+		{:else if wellbeingError}
+			<p class="text-sm text-danger">Couldn't load the check-ins: {wellbeingError}</p>
 		{:else if !perma?.length}
 			<p class="text-sm text-ink-soft">No PERMA check-ins yet.</p>
 		{:else}
@@ -250,7 +248,7 @@
 					? `; change since ${formatDate(perma[1].completedAt)}`
 					: ''}. Scores 0–10; for negative emotion and loneliness, lower is better.
 			</p>
-			<div class="grid grid-cols-5 gap-2">
+			<div class="grid grid-cols-2 gap-2 md:grid-cols-5">
 				{#each PERMA_KEYS as k (k)}
 					{@const d = change(k)}
 					<div class="rounded-lg bg-canvas px-3 py-2">
@@ -262,26 +260,28 @@
 					</div>
 				{/each}
 			</div>
-			<table class="mt-4 w-full text-xs">
-				<thead class="text-left text-ink-soft">
-					<tr>
-						<th class="py-1 font-semibold">Date</th>
-						{#each PERMA_KEYS as k (k)}<th class="py-1 text-right font-semibold">
-								{k.slice(0, 5)}
-							</th>{/each}
-					</tr>
-				</thead>
-				<tbody class="divide-y divide-line/40">
-					{#each perma as row, i (i)}
+			<div class="mt-4 overflow-x-auto">
+				<table class="w-full text-xs">
+					<thead class="text-left text-ink-soft">
 						<tr>
-							<td class="py-1">{formatDate(row.completedAt)}</td>
-							{#each PERMA_KEYS as k (k)}<td class="py-1 text-right">
-									{row.scores[k] ?? '—'}
-								</td>{/each}
+							<th class="py-1 font-semibold">Date</th>
+							{#each PERMA_KEYS as k (k)}<th class="py-1 text-right font-semibold">
+									{k.slice(0, 5)}
+								</th>{/each}
 						</tr>
-					{/each}
-				</tbody>
-			</table>
+					</thead>
+					<tbody class="divide-y divide-line/40">
+						{#each perma as row, i (i)}
+							<tr>
+								<td class="py-1">{formatDate(row.completedAt)}</td>
+								{#each PERMA_KEYS as k (k)}<td class="py-1 text-right">
+										{row.scores[k] ?? '—'}
+									</td>{/each}
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
 		{/if}
 	{:else if tab === 'money'}
 		{#if money === undefined}
@@ -289,9 +289,9 @@
 		{:else if moneyError}
 			<p class="text-sm text-danger">Couldn't load the financial data: {moneyError}</p>
 		{:else if money === null}
-			<p class="text-sm text-ink-soft">No financial data from the portal.</p>
+			<p class="text-sm text-ink-soft">No financial data from the Portal.</p>
 		{:else}
-			<div class="grid grid-cols-3 gap-3">
+			<div class="grid grid-cols-1 gap-3 md:grid-cols-3">
 				{#each [['Starting income', eur(money.startingIncome)], ['Current income', eur(money.currentIncome)], ['Growth', money.growth || '—']] as [label, value] (label)}
 					<div class="rounded-lg bg-canvas px-3 py-2">
 						<div class="text-[11px] font-semibold text-ink-soft">{label}</div>

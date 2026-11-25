@@ -1,15 +1,30 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { collection, query, where, orderBy, limit, getCountFromServer } from 'firebase/firestore';
+	import {
+		collection,
+		query,
+		where,
+		orderBy,
+		limit,
+		getCountFromServer,
+		Timestamp
+	} from 'firebase/firestore';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { db } from '$lib/firebase';
 	import { callAction } from '$lib/actions';
 	import { me } from '$lib/stores';
-	import { hasPermission, listen, setTitle, formatDate, toDate } from '$lib/utils';
-	import { contactTitle } from '$lib/helpers/crmConfig.svelte';
+	import { hasPermission, listen, setTitle, formatDate, formatDateTime, toDate } from '$lib/utils';
+	import {
+		contactTitle,
+		crmConfig,
+		daysQuiet,
+		stageLabel,
+		tickTask
+	} from '$lib/helpers/crmConfig.svelte';
 	import type { Contact, Task } from '$lib/types/crm';
 	import type { Health } from '$lib/types/connections';
 	import StatusDot from '$lib/components/shared/StatusDot.svelte';
+	import FormError from '$lib/components/shared/FormError.svelte';
 
 	setTitle('Home', 'What needs you today');
 
@@ -19,11 +34,42 @@
 
 	let tasks = $state<Task[]>([]);
 	let undated = $state(0);
-	let attention = $state<Contact[]>([]);
+	let attentionMine = $state<Contact[]>([]);
+	let attentionAll = $state<Contact[]>([]);
+	// Mine first, then the rest of the team's.
+	let attention = $derived([
+		...attentionMine,
+		...attentionAll.filter((c) => !attentionMine.some((m) => m.id === c.id))
+	]);
+	let error = $state<string | null>(null);
+	const cfg = crmConfig();
 	let summary = $state<Summary | null>(null);
 	let health = $state<Health | null>(null);
 
 	const canCrm = hasPermission('crm.any.read');
+	const canWrite = hasPermission('crm.any.write');
+
+	// Needs attention, live: open and no activity for staleDays (the CRM uses the same rule).
+	$effect(() => {
+		const staleDays = cfg.value?.staleDays;
+		const uid = $me?.uid;
+		if (!canCrm || !uid || !staleDays) return;
+		const cutoff = Timestamp.fromMillis(Date.now() - staleDays * 86_400_000);
+		const stale = (...filters: ReturnType<typeof where>[]) =>
+			query(
+				collection(db, 'contact'),
+				...filters,
+				where('open', '==', true),
+				where('lastActivityAt', '<', cutoff),
+				orderBy('lastActivityAt'),
+				limit(10)
+			);
+		const unsubs = [
+			listen<Contact>(stale(where('ownerUid', '==', uid)), (rows) => (attentionMine = rows)),
+			listen<Contact>(stale(), (rows) => (attentionAll = rows))
+		];
+		return () => unsubs.forEach((u) => u());
+	});
 
 	onMount(() => {
 		if (hasPermission('reports.any.read'))
@@ -47,17 +93,6 @@
 					limit(20)
 				),
 				(rows) => (tasks = rows)
-			),
-			listen<Contact>(
-				query(
-					collection(db, 'contact'),
-					// Open ones only, as the KPI counts (a Fellow or Lost contact needs no chasing).
-					where('open', '==', true),
-					where('needsAttention', '==', true),
-					orderBy('createdAt', 'desc'),
-					limit(10)
-				),
-				(rows) => (attention = rows)
 			)
 		];
 		return () => unsubs.forEach((u) => u());
@@ -83,21 +118,26 @@
 	</div>
 
 	{#if summary}
-		<div class="grid grid-cols-4 gap-3">
-			{#each [['New contacts (30 days)', summary.kpis.newLast30], ['Needs attention', summary.kpis.needsAttention], ['Open tasks', summary.kpis.openTasks], ['Overdue tasks', summary.kpis.overdueTasks]] as [label, value] (label)}
-				<div class="card px-4 py-3">
+		{@const k = summary.kpis}
+		<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+			{#each [{ label: 'My open tasks', value: k.openTasks, href: '/tasks?scope=mine', tone: '' }, { label: 'My overdue tasks', value: k.overdueTasks, href: '/tasks?scope=mine#overdue', tone: k.overdueTasks ? 'text-danger' : '' }, { label: 'My contacts needing attention', value: k.needsAttention, href: '/crm?attention=1&owner=me', tone: k.needsAttention ? 'text-warning' : '' }, { label: 'New contacts (30 days)', value: k.newLast30, href: '/crm?view=list', tone: '' }] as { label, value, href, tone } (label)}
+				<a {href} class="block card px-4 py-3 hover:border-primary-300">
 					<div class="text-xs font-semibold text-ink-soft">{label}</div>
-					<div class="mt-1 text-2xl font-bold">{value}</div>
-				</div>
+					<div class="mt-1 text-2xl font-bold {tone}">{value}</div>
+				</a>
 			{/each}
 		</div>
 	{/if}
+	<FormError message={error} />
 
-	<div class="grid grid-cols-3 gap-4">
-		<section class="col-span-2 card">
+	<div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+		<section class="card lg:col-span-2">
 			<div class="flex items-center justify-between border-b border-line/60 px-4 py-3">
 				<h3 class="font-bold">My tasks</h3>
-				<a href="/tasks" class="text-xs font-semibold text-primary-600 hover:text-primary-700">
+				<a
+					href="/tasks?scope=mine"
+					class="text-xs font-semibold text-primary-600 hover:text-primary-700"
+				>
 					All tasks
 				</a>
 			</div>
@@ -108,8 +148,16 @@
 			{:else}
 				<ul class="divide-y divide-line/40">
 					{#each tasks as t (t.id)}
-						<li class="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
-							<div class="min-w-0">
+						<li class="flex items-center gap-3 px-4 py-2.5 text-sm">
+							<input
+								type="checkbox"
+								class="rounded text-primary-600"
+								aria-label="Done: {t.title}"
+								disabled={!canWrite}
+								checked={false}
+								onchange={async (e) => (error = await tickTask(t.id, e.currentTarget))}
+							/>
+							<div class="min-w-0 flex-1">
 								<div class="truncate font-medium">{t.title}</div>
 								{#if t.contactId}
 									<a href="/crm/{t.contactId}" class="text-xs text-ink-soft hover:text-primary-700">
@@ -132,7 +180,7 @@
 			{/if}
 			{#if undated}
 				<a
-					href="/tasks"
+					href="/tasks?scope=mine#no-due-date"
 					class="block border-t border-line/40 px-4 py-2 text-xs font-semibold text-primary-700 hover:underline"
 				>
 					+ {undated} with no due date
@@ -140,7 +188,7 @@
 			{/if}
 		</section>
 
-		<div class="space-y-4">
+		<div class="min-w-0 space-y-4">
 			{#if health}
 				<a href="/health" class="block card px-4 py-3 hover:border-primary-300">
 					<div class="text-xs font-semibold text-ink-soft">System health</div>
@@ -156,7 +204,7 @@
 				</div>
 				{#if attention.length === 0}
 					<p class="px-4 py-6 text-sm text-ink-soft">
-						No contact has gone 14 days without activity.
+						No open contact has gone {cfg.value?.staleDays ?? 14} days without activity.
 					</p>
 				{:else}
 					<ul class="divide-y divide-line/40">
@@ -165,7 +213,17 @@
 								<a href="/crm/{c.id}" class="font-medium hover:text-primary-700">
 									{contactTitle(c)}
 								</a>
-								<div class="text-xs text-ink-soft">{c.ownerName ?? 'No owner'}</div>
+								<div class="text-xs text-ink-soft">
+									<span
+										class="font-semibold text-warning"
+										title="Last activity {formatDateTime(c.lastActivityAt)}"
+									>
+										{daysQuiet(c)} days without activity
+									</span>
+									· {stageLabel(cfg.value, c.type, c.stage)} · {c.ownerUid === $me?.uid
+										? 'Yours'
+										: (c.ownerName ?? 'No owner')}
+								</div>
 							</li>
 						{/each}
 					</ul>
