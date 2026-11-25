@@ -12,6 +12,7 @@
 		"format": "prettier --write .",
 		"lint": "prettier --check . && eslint .",
 		"emulate": "vite dev --port 5002",
+		"test": "npm --prefix functions run build && firebase emulators:exec --only firestore --project demo-flf-hub \"node scripts/tests/portal-sync.mjs\"",
 		"emulators:start": "cd functions && npm run build && cd .. && mkdir -p firestore-export && firebase emulators:start --only auth,functions,firestore --import=./firestore-export --export-on-exit"
 	},
 	"devDependencies": {
