@@ -26,6 +26,19 @@
 	}
 	onMount(load);
 
+	/** Check every connection now, then show the fresh results (Refresh alone only re-reads them). */
+	async function checkNow() {
+		loading = true;
+		error = null;
+		try {
+			const ids = health?.connections.map((c) => c.id) ?? [];
+			// Someone without connections.any.read still gets the stored results.
+			await Promise.allSettled(ids.map((id) => callAction('connections:test', { id })));
+		} finally {
+			await load();
+		}
+	}
+
 	const OVERALL: Record<Level, [string, string]> = {
 		ok: ['All systems working', 'bg-success/10 border-success/30'],
 		warning: ['Working, some connections need setup', 'bg-warning/10 border-warning/30'],
@@ -49,13 +62,14 @@
 			<div>
 				<StatusDot level={health.overall} label={text} />
 				<p class="mt-1 text-xs text-ink-soft">
-					Connections are checked every hour. Last new contact: {health.data.lastContactAt
+					Connections are checked every hour, or now with Check now. Last new contact: {health.data
+						.lastContactAt
 						? relative(health.data.lastContactAt)
 						: 'none yet'}.
 				</p>
 			</div>
-			<button class="btn-ghost" onclick={load} disabled={loading}>
-				<RefreshCw class="h-4 w-4 {loading ? 'animate-spin' : ''}" /> Refresh
+			<button class="btn-ghost" onclick={checkNow} disabled={loading}>
+				<RefreshCw class="h-4 w-4 {loading ? 'animate-spin' : ''}" /> Check now
 			</button>
 		</div>
 
