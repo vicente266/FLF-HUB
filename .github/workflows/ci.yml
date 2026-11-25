@@ -1,0 +1,88 @@
+# Quality gates and tests on every push and pull request. Nothing here deploys or reaches a real
+# Firebase project: the tests run against the Firestore emulator with a demo- project id.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint, types and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix functions
+      - name: Lint (prettier + eslint)
+        run: npm run lint
+      - name: Types (svelte-check)
+        run: npm run check
+      - name: Build web app
+        # Placeholder Firebase config: the build only needs the variables to exist.
+        env:
+          VITE_FIREBASE_API_KEY: ci
+          VITE_FIREBASE_AUTH_DOMAIN: ci.firebaseapp.com
+          VITE_FIREBASE_PROJECT_ID: demo-flf-hub
+          VITE_FIREBASE_STORAGE_BUCKET: ci
+          VITE_FIREBASE_MESSAGING_SENDER_ID: '0'
+          VITE_FIREBASE_APP_ID: ci
+        run: npm run build
+      - name: Build functions
+        run: npm --prefix functions run build
+
+  tests:
+    name: Integration tests (emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: npm ci --prefix functions
+      - run: npm install -g firebase-tools@15
+      - name: Portal import against the Firestore emulator
+        run: npm test
+
+  tv-worker:
+    name: FLF TV worker (types and self-test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: tv-worker/package-lock.json
+      - run: npm ci --prefix tv-worker
+      - run: npm --prefix tv-worker run check
+      - run: npm --prefix tv-worker test

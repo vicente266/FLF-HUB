@@ -203,6 +203,62 @@
 					"order": "DESCENDING"
 				}
 			]
+		},
+		{
+			"collectionGroup": "tvVideo",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "status",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "createdAt",
+					"order": "ASCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "tvClip",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "videoId",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "index",
+					"order": "ASCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "tvClip",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "videoId",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "status",
+					"order": "ASCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "tvClip",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "status",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "updatedAt",
+					"order": "ASCENDING"
+				}
+			]
 		}
 	],
 	"fieldOverrides": []

@@ -52,12 +52,17 @@ Behind an HTTP proxy, start the emulators with the proxy variables unset
 (`env -u HTTPS_PROXY -u HTTP_PROXY firebase emulators:start …`): the emulator calls itself on
 localhost and some versions send that through the proxy.
 
-## Quality gates
+## Quality gates and CI
+
+GitHub Actions (`.github/workflows/ci.yml`) runs all of this on every push and pull request to
+`main`: lint, types, both builds, then `npm test` (the portal import against the Firestore
+emulator, invented data, never a real project). Run the same locally before pushing:
 
 ```sh
 npm run lint     # prettier + eslint
 npm run check    # svelte-check
 cd functions && npm run build
+npm test         # needs Java 21 and the Firebase CLI
 ```
 
 ## Deploy

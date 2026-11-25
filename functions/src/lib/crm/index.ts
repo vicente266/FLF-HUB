@@ -458,7 +458,7 @@ export const actions = {
 		const due = endOfDay(str(p.dueAt, 'dueAt'));
 		await tasks.add({
 			contactId,
-			contactName: c.data()?.name,
+			contactName: displayName(c.data() ?? {}),
 			title: str(p.title, 'title'),
 			dueAt: due,
 			assigneeUid: str(p.assigneeUid, 'assigneeUid', false) || auth.uid,

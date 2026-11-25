@@ -45,6 +45,16 @@ service cloud.firestore {
     match /connection/{id} {
       allow read: if team();
     }
+    // FLF TV: videos, clips, transcripts and the two skills; written by tv.* actions and the Mac worker.
+    match /tvVideo/{id} {
+      allow read: if team();
+    }
+    match /tvClip/{id} {
+      allow read: if team();
+    }
+    match /tvSkill/{id} {
+      allow read: if team();
+    }
     match /{document=**} {
       allow read, write: if false;
     }

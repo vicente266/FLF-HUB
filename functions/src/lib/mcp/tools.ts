@@ -17,6 +17,7 @@ import { CONTACT_TYPES, NEXT_STEPS, PIPELINES, SEGMENTS, SOURCES, STALE_DAYS } f
 import { AUTOMATIONS } from '../automations/config';
 import { CONNECTORS } from '../connections/config';
 import * as reports from '../reports/index';
+import * as tv from '../tv/index';
 import * as health from '../health/index';
 import * as portal from '../portal/index';
 import { PERMISSIONS } from '../permissions';
@@ -1109,6 +1110,200 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			async ({ id }) => {
 				await act('core', 'knowledge.delete', { id });
 				return data({ deleted: id });
+			}
+		)
+	);
+
+	// ---------------------------------------------------------------- FLF TV
+
+	server.registerTool(
+		'flf_tv_list',
+		{
+			title: 'FLF TV: videos and clips',
+			description:
+				'FLF TV turns long Drive videos into branded vertical clips (processed on the Mac). Without ' +
+				'video_id: the latest videos with their status. With video_id: that video and its clips ' +
+				'(times, hook, caption, hashtags, status, rendered link).',
+			inputSchema: z.object({ video_id: ID.optional() }),
+			annotations: read
+		},
+		run(
+			'flf_tv_list',
+			(a) => a.video_id ?? 'videos',
+			async ({ video_id }) => {
+				await need('tv.any.read');
+				if (!video_id) {
+					const snap = await tv.videos.orderBy('createdAt', 'desc').limit(LIST_LIMIT).get();
+					await audit(
+						caller,
+						'flf_tv_list',
+						snap.docs.map((d) => d.id)
+					);
+					return data(
+						snap.docs.map((d) => ({
+							id: d.id,
+							title: d.data().title,
+							status: d.data().status,
+							step: d.data().step,
+							clips: d.data().clipCount,
+							minutes: d.data().durationSec ? Math.round(d.data().durationSec / 60) : null,
+							error: d.data().error,
+							createdAt: iso(d.data().createdAt)
+						}))
+					);
+				}
+				const [v, c] = await Promise.all([
+					tv.videos.doc(video_id).get(),
+					tv.clips.where('videoId', '==', video_id).orderBy('index').limit(50).get()
+				]);
+				if (!v.exists) throw new HttpsError('not-found', 'Video not found. Use flf_tv_list.');
+				await audit(caller, 'flf_tv_list', [video_id, ...c.docs.map((d) => d.id)]);
+				return data({
+					id: v.id,
+					title: v.data()!.title,
+					status: v.data()!.status,
+					driveUrl: v.data()!.driveUrl,
+					clips: c.docs.map((d) => {
+						const x = d.data();
+						return {
+							id: d.id,
+							start: x.start,
+							end: x.end,
+							seconds: Math.round(x.end - x.start),
+							hook: x.hook,
+							caption: x.caption,
+							hashtags: x.hashtags,
+							reason: x.reason,
+							score: x.score,
+							status: x.status,
+							renderUrl: x.renderUrl ?? null,
+							error: x.error ?? null
+						};
+					})
+				});
+			}
+		)
+	);
+
+	server.registerTool(
+		'flf_tv_add_video',
+		{
+			title: 'FLF TV: add a video',
+			description:
+				'Queue a Google Drive video for the Mac worker: it transcribes it and proposes clips with the ' +
+				'Clipping skill. The Drive file must be shared with the worker’s account.',
+			inputSchema: z.object({
+				drive_url: z.string().min(10).max(500),
+				title: z.string().max(200).optional()
+			}),
+			annotations: write
+		},
+		run(
+			'flf_tv_add_video',
+			() => 'video',
+			async (a) =>
+				data(await act('core', 'tv.video.add', { url: a.drive_url, title: a.title ?? '' }))
+		)
+	);
+
+	server.registerTool(
+		'flf_tv_update_clip',
+		{
+			title: 'FLF TV: edit a clip',
+			description:
+				'Change a clip’s start/end (seconds), hook (on-screen title), caption, hashtags or framing ' +
+				'(focus_x 0 = left … 1 = right). Changing a rendered clip’s look sends it back to render.',
+			inputSchema: z.object({
+				clip_id: ID,
+				start: z.number().min(0).optional(),
+				end: z.number().min(0).optional(),
+				hook: z.string().max(120).optional(),
+				caption: z.string().max(2200).optional(),
+				hashtags: z.array(z.string().max(40)).max(10).optional(),
+				focus_x: z.number().min(0).max(1).optional()
+			}),
+			annotations: write
+		},
+		run(
+			'flf_tv_update_clip',
+			(a) => a.clip_id,
+			async ({ clip_id, focus_x, ...rest }) => {
+				await act('core', 'tv.clip.update', {
+					id: clip_id,
+					...rest,
+					...(focus_x === undefined ? {} : { focusX: focus_x })
+				});
+				return data({ updated: clip_id });
+			}
+		)
+	);
+
+	server.registerTool(
+		'flf_tv_set_clip_status',
+		{
+			title: 'FLF TV: approve or reject a clip',
+			description:
+				'approved: the Mac renders it and uploads it to Drive. rejected: dropped. suggested: back to review.',
+			inputSchema: z.object({ clip_id: ID, status: z.enum(['approved', 'rejected', 'suggested']) }),
+			annotations: write
+		},
+		run(
+			'flf_tv_set_clip_status',
+			(a) => a.clip_id,
+			async ({ clip_id, status }) => {
+				await act('core', 'tv.clip.status', { id: clip_id, status });
+				return data({ clip: clip_id, status });
+			}
+		)
+	);
+
+	server.registerTool(
+		'flf_tv_get_skill',
+		{
+			title: 'FLF TV: read a skill',
+			description:
+				'The Clipping skill (what makes a good FLF clip, which Claude follows on every video) or the ' +
+				'Brand skill (the look, plus the renderer settings: colours, sizes, clip length limits).',
+			inputSchema: z.object({ skill: z.enum(['clipping', 'brand']) }),
+			annotations: read
+		},
+		run(
+			'flf_tv_get_skill',
+			(a) => a.skill,
+			async ({ skill }) => {
+				await audit(caller, 'flf_tv_get_skill', [skill]);
+				return data(await act('core', 'tv.skill.get', { id: skill }));
+			}
+		)
+	);
+
+	server.registerTool(
+		'flf_tv_save_skill',
+		{
+			title: 'FLF TV: save a skill',
+			description:
+				'Replace the Clipping or Brand skill text (read it with flf_tv_get_skill first and keep what ' +
+				'should stay). For brand, `brand` sets renderer settings (keys as flf_tv_get_skill shows). ' +
+				'The next video uses it.',
+			inputSchema: z.object({
+				skill: z.enum(['clipping', 'brand']),
+				text: z.string().min(20).max(20000),
+				brand: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional()
+			}),
+			annotations: write
+		},
+		run(
+			'flf_tv_save_skill',
+			(a) => a.skill,
+			async ({ skill, text, brand }) => {
+				const r = (await act('core', 'tv.skill.save', {
+					id: skill,
+					text,
+					...(brand ? { brand } : {})
+				})) as {
+					version: number;
+				};
+				return data({ saved: skill, version: r.version });
 			}
 		)
 	);

@@ -51,6 +51,14 @@ export function emailsOf(cell: string): string[] {
 const primaryEmail = (cell: string) => emailsOf(cell)[0] ?? '';
 
 /** The Hub id of a person from the sheet: by (first) email, or by name when there is none. */
+/**
+ * The id a person had before the first-email identity, keyed by the whole Email cell. Kept so a
+ * contact made then is moved to its new id instead of left behind as a duplicate.
+ */
+export function legacyContactIdOf(email: string, name: string): string {
+	return `portal-${hash(lower(email) || `name:${lower(name)}`)}`;
+}
+
 export function contactIdOf(email: string, name: string): string {
 	const key = primaryEmail(email) || `name:${lower(name)}`;
 	return `portal-${hash(key)}`;
@@ -200,6 +208,7 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 			put(
 				contactIdOf(r['Email'], r['Name']),
 				{
+					legacyIds: [legacyContactIdOf(r['Email'], r['Name'])],
 					name: r['Name'] || r['Email'],
 					email: primaryEmail(r['Email']),
 					otherEmails: emailsOf(r['Email']).slice(1),
@@ -223,6 +232,7 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 			put(
 				contactIdOf(r['Email'], r['Name']),
 				{
+					legacyIds: [legacyContactIdOf(r['Email'], r['Name'])],
 					name: r['Name'] || r['Email'],
 					email: primaryEmail(r['Email']),
 					otherEmails: emailsOf(r['Email']).slice(1),
@@ -272,6 +282,7 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 			put(
 				contactIdOf(r['Email'], r['Name']),
 				{
+					legacyIds: [legacyContactIdOf(r['Email'], r['Name'])],
 					name: r['Name'] || r['Email'],
 					email: primaryEmail(r['Email']),
 					otherEmails: emailsOf(r['Email']).slice(1),
@@ -458,6 +469,43 @@ export async function dryRun() {
 }
 
 /**
+ * Move a contact to a new id: its document, its timeline and its tasks. Used once per contact
+ * whose id changed with the first-email identity. Returns false when there is nothing to move.
+ */
+async function moveContact(fromId: string, toId: string): Promise<boolean> {
+	const from = crm.contacts.doc(fromId);
+	const snap = await from.get();
+	if (!snap.exists) return false;
+	const to = crm.contacts.doc(toId);
+	await to.set(snap.data()!);
+	const [activity, taskSnap] = await Promise.all([
+		from.collection('activity').get(),
+		crm.tasks.where('contactId', '==', fromId).get()
+	]);
+	let batch = db.batch();
+	let n = 0;
+	const step = async () => {
+		if (++n >= 400) {
+			await batch.commit();
+			batch = db.batch();
+			n = 0;
+		}
+	};
+	for (const a of activity.docs) {
+		batch.set(to.collection('activity').doc(a.id), a.data());
+		await step();
+	}
+	for (const t of taskSnap.docs) {
+		batch.update(t.ref, { contactId: toId });
+		await step();
+	}
+	await batch.commit();
+	await db.recursiveDelete(from);
+	logger.log(`moved contact ${fromId} -> ${toId}`);
+	return true;
+}
+
+/**
  * Read the sheet and upsert everything into the Hub. Contacts keep the Hub's own fields
  * (timeline, tasks, notes, owner once set in the Hub).
  *
@@ -483,7 +531,11 @@ export async function run() {
 	);
 	for (const c of p.contacts) {
 		const ref = crm.contacts.doc(c.id);
-		const doc = await ref.get();
+		let doc = await ref.get();
+		if (!doc.exists) {
+			const legacy = ((c.data.legacyIds as string[] | undefined) ?? []).find((id) => id !== c.id);
+			if (legacy && (await moveContact(legacy, c.id))) doc = await ref.get();
+		}
 		const d = c.data;
 		const stage = String(d.stage);
 		const portal = {
@@ -568,6 +620,12 @@ export async function run() {
 				to: stage,
 				at: now
 			});
+			// Sync writes skip crmContactWritten, so close the old stage's tasks here, as a Hub move does.
+			await crm.closeAutomationTasks(c.id, [
+				'stage-follow-up',
+				'meeting-next-stage',
+				'stale-contacts'
+			]);
 			moved++;
 		}
 		const sheetNext = portal.sheetNextStep;
@@ -608,7 +666,10 @@ export async function run() {
 	// the cohort averages too. Only after a whole, unchanged read of their tabs. One read per doc.
 	const whole = (k: TabKey) => !tabs[k].missing.length && !tabs[k].truncated;
 	let removedHealth = 0;
-	if (whole('perma')) {
+	// Who is a contact comes from these tabs: a partial read of any of them would make real Fellows
+	// look like strangers, and their data would be deleted.
+	const contactsWhole = (['crm', 'profiles', 'applications'] as TabKey[]).every(whole);
+	if (contactsWhole && whole('perma')) {
 		const keep = new Set(p.wellbeing.map((w) => w.id));
 		for (const d of (await wellbeing.select().get()).docs)
 			if (!keep.has(d.id)) {
@@ -617,7 +678,7 @@ export async function run() {
 				if (++n >= 400) await flush();
 			}
 	}
-	if (whole('profiles') && whole('wealth')) {
+	if (contactsWhole && whole('wealth')) {
 		const keep = new Set(p.finance.map((f) => f.id));
 		for (const d of (await finance.select().get()).docs)
 			if (!keep.has(d.id)) {
@@ -652,8 +713,17 @@ export async function run() {
 	let removedEvents = 0;
 	if (!p.drift[TABS.events.name] && !p.truncated.includes('events')) {
 		const current = new Set(p.events.map((e) => e.id));
+		const nowIn = new Map(p.events.map((e) => [e.id, new Set(e.data.contactIds as string[])]));
 		for (const [id, contactIds] of known) {
-			if (current.has(id)) continue;
+			if (current.has(id)) {
+				// Kept meeting: drop it from the timelines of people no longer listed on it.
+				for (const cid of contactIds) {
+					if (nowIn.get(id)?.has(cid)) continue;
+					b.delete(crm.contacts.doc(cid).collection('activity').doc(id));
+					if (++n >= 400) await flush();
+				}
+				continue;
+			}
 			b.delete(events.doc(id));
 			if (++n >= 400) await flush();
 			for (const cid of contactIds) {
