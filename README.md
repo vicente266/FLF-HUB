@@ -92,3 +92,18 @@ npm run build                      # writes build/, .htaccess included
 
 Upload the **contents** of `build/` (including the hidden `.htaccess`) to the subdomain's folder
 in Hostinger (File Manager or FTP), replacing what is there.
+
+### Automatic deploy (GitHub Actions)
+
+`.github/workflows/deploy.yml` deploys `main` after CI passes; each part is skipped until its
+secrets exist (repo → Settings → Secrets and variables → Actions). Run it by hand from the
+Actions tab (**Deploy → Run workflow**).
+
+- **Web (Hostinger):** secrets `HOSTINGER_FTP_SERVER`, `HOSTINGER_FTP_USERNAME`,
+  `HOSTINGER_FTP_PASSWORD` (hPanel → Files → FTP Accounts; an account limited to the hub.
+  folder is safest). Variables `VITE_FIREBASE_*` (as in `.env.example`) and, when the FTP
+  account's root is not the hub. folder, `HOSTINGER_FTP_DIR`.
+- **Backend (Firebase):** secret `FIREBASE_SERVICE_ACCOUNT`, the JSON key of a service account
+  in `flfhub` with Firebase Admin, Cloud Functions Admin, Cloud Run Admin, Service Account User,
+  Secret Manager Viewer and Artifact Registry Administrator. New Secret Manager secrets are
+  still created by hand (`firebase functions:secrets:set`) before the deploy that needs them.

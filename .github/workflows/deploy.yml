@@ -1,0 +1,101 @@
+# Deploys main after CI passes: the web app to Hostinger over FTPS, the backend to Firebase.
+# Each part runs only once its secrets exist (repo Settings → Secrets and variables → Actions),
+# so this workflow does nothing until it is set up. See README, "Automatic deploy".
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Firebase (functions, rules, indexes)
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: Not set up
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: echo "FIREBASE_SERVICE_ACCOUNT is not set; skipping the backend deploy."
+      - uses: actions/checkout@v4
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v4
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+      - uses: google-github-actions/auth@v2
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      - name: Deploy
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: |
+          npm ci --prefix functions
+          npx --yes firebase-tools@15 deploy --only functions,firestore:rules,firestore:indexes --project flfhub --non-interactive --force
+
+  web:
+    name: Web app (Hostinger)
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FTP_SERVER: ${{ secrets.HOSTINGER_FTP_SERVER }}
+      FTP_USERNAME: ${{ secrets.HOSTINGER_FTP_USERNAME }}
+      FTP_PASSWORD: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+      # Folder of the hub. subdomain, relative to the FTP account's root (e.g. `/` or `public_html/hub`).
+      FTP_DIR: ${{ vars.HOSTINGER_FTP_DIR || '/' }}
+    steps:
+      - name: Not set up
+        if: env.FTP_SERVER == ''
+        run: echo "HOSTINGER_FTP_SERVER is not set; skipping the web deploy."
+      - uses: actions/checkout@v4
+        if: env.FTP_SERVER != ''
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v4
+        if: env.FTP_SERVER != ''
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Build
+        if: env.FTP_SERVER != ''
+        # The Firebase web config is public (it ships in the page); kept in repo variables.
+        env:
+          VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
+        run: |
+          test -n "$VITE_FIREBASE_API_KEY" || { echo "Set the VITE_FIREBASE_* repo variables."; exit 1; }
+          npm ci
+          npm run build
+      - name: Upload over FTPS
+        if: env.FTP_SERVER != ''
+        # Old hashed files under _app/immutable are removed only after the new ones are up,
+        # so a page open during the upload keeps working.
+        run: |
+          sudo apt-get install -y -qq lftp >/dev/null
+          lftp -u "$FTP_USERNAME,$FTP_PASSWORD" "$FTP_SERVER" -e "
+            set ftp:ssl-force true; set net:max-retries 3;
+            mirror -R --parallel=4 --exclude-glob .DS_Store build/_app '$FTP_DIR/_app';
+            mirror -R --parallel=4 --exclude-glob .DS_Store --exclude ^_app/ build '$FTP_DIR';
+            mirror -R --delete --parallel=4 build/_app '$FTP_DIR/_app';
+            bye"
