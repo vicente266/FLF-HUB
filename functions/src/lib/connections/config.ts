@@ -68,6 +68,30 @@ export const CONNECTORS: Connector[] = [
 		testable: true
 	},
 	{
+		id: 'checkly',
+		name: 'Checkly',
+		category: 'platform',
+		availability: 'live',
+		description:
+			'External monitoring (free Hobby plan): Checkly checks the website, the portal and the Hub every few minutes from outside. The Hub shows its pass/fail in Health.',
+		feeds: ['Health'],
+		secrets: ['CHECKLY_API_KEY'],
+		settings: [
+			{
+				key: 'accountId',
+				label: 'Account id',
+				help: 'Checkly → Account settings → General.',
+				kind: 'text'
+			}
+		],
+		setup: [
+			'Create a free Checkly account and add URL monitors (GET only) for the website, the portal login page and the Hub.',
+			'Checkly → User settings → API keys: create a key. Developer only: `firebase functions:secrets:set CHECKLY_API_KEY`, deploy.',
+			'Put the account id here and press Test.'
+		],
+		testable: true
+	},
+	{
 		id: 'n8n',
 		name: 'n8n workflows',
 		category: 'platform',

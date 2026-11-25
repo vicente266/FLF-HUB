@@ -25,6 +25,8 @@ import * as tv from './lib/tv/index';
 
 setGlobalOptions({ maxInstances: 10, region: REGION });
 
+/** Checkly read API key (Health). */
+const checklyApiKey = defineSecret('CHECKLY_API_KEY');
 /** n8n API key, used only to list executions (Health). */
 const n8nApiKey = defineSecret('N8N_API_KEY');
 /** Signs the Claude connector's clients and tokens and seals its keys (docs/claude-connector.md). */
@@ -44,10 +46,11 @@ const userLogger = utils.createLogger('user');
 
 /** Secrets for connection checks, read only inside handlers that declared them. */
 const secrets = (): connections.Secrets => ({
+	checklyApiKey: optional(checklyApiKey),
 	n8nApiKey: optional(n8nApiKey)
 });
 /** Every secret a connection check reads. */
-const checkSecrets = [n8nApiKey];
+const checkSecrets = [checklyApiKey, n8nApiKey];
 
 /*
  * EVERY callable is one `<feature>Action` dispatcher (see dispatch.ts). Add an action to the

@@ -40,7 +40,7 @@ Node 24 (`.nvmrc`), Java 21 for the emulators, `npm i -g firebase-tools`.
 
 ```sh
 npm install && (cd functions && npm install)
-printf 'N8N_API_KEY=\nFLF_MCP_KEY=%s\n' "$(openssl rand -base64 48)" > functions/.secret.local
+printf 'N8N_API_KEY=\nCHECKLY_API_KEY=\nFLF_MCP_KEY=%s\n' "$(openssl rand -base64 48)" > functions/.secret.local
 printf 'FLF_HUB_URL=http://localhost:5002\n' > functions/.env.local
 npm run emulators:start            # auth, functions, firestore (+ app on :5002)
 node scripts/seed-emulator.mjs     # admin + sample data
@@ -77,7 +77,7 @@ The web app is a static site on **Hostinger** (`hub.foundersforlifefellowship.co
    `hub.foundersforlifefellowship.com`, remove anything not used.
 3. Google Cloud → APIs & Services → Credentials: restrict the browser API key to HTTP referrer
    `https://hub.foundersforlifefellowship.com/*`.
-4. Secrets: `firebase functions:secrets:set` for `FLF_MCP_KEY` and `N8N_API_KEY`
+4. Secrets: `firebase functions:secrets:set` for `FLF_MCP_KEY`, `N8N_API_KEY` and `CHECKLY_API_KEY`
    A connection not set up yet gets `-` (or `unset`): Secret Manager can't store an empty value,
    and the code reads either as not configured.
 5. `firebase deploy --only functions,firestore` (functions, rules and indexes).

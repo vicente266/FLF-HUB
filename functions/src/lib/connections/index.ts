@@ -25,6 +25,7 @@ export interface ConnectionState {
 
 /** Secrets a check may use, passed in by the dispatcher that holds them. */
 export interface Secrets {
+	checklyApiKey?: string;
 	n8nApiKey?: string;
 }
 
@@ -193,6 +194,30 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 				if (drift.length)
 					return { status: 'error', detail: `The sheet's columns changed: ${drift.join('; ')}` };
 				return { status: 'ok', detail: `All columns found. Rows: ${rows}` };
+			}
+			case 'checkly': {
+				if (!secrets.checklyApiKey || !settings.accountId) {
+					return {
+						status: 'not_configured',
+						detail: 'CHECKLY_API_KEY and the account id are needed.'
+					};
+				}
+				const res = await get('https://api.checklyhq.com/v1/check-statuses', {
+					Authorization: `Bearer ${secrets.checklyApiKey}`,
+					'X-Checkly-Account': settings.accountId
+				});
+				if (!res.ok) return { status: 'error', detail: `Checkly answered ${res.status}.` };
+				const checks = (await res.json()) as {
+					name: string;
+					hasFailures: boolean;
+					hasErrors: boolean;
+				}[];
+				if (!checks.length)
+					return { status: 'not_configured', detail: 'No checks in Checkly yet.' };
+				const failing = checks.filter((c) => c.hasFailures || c.hasErrors).map((c) => c.name);
+				return failing.length
+					? { status: 'error', detail: `Failing: ${failing.join(', ')}` }
+					: { status: 'ok', detail: `${checks.length} checks passing.` };
 			}
 			case 'n8n': {
 				const list = pairs(settings.workflows);
