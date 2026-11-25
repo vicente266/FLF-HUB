@@ -29,14 +29,22 @@ Base and Intro Request are not imported yet.
   While the portal is live the sheet wins for the fields it owns; the Hub keeps its timeline, tasks
   and notes, and an owner set in the Hub. A stage change in the sheet is logged as "from the portal
   sheet".
+- **One contact per person.** A new id first takes over the contact saved under an earlier id (the
+  whole Email cell, or the name alone from a row without an email), then a Fellow contact with the
+  same email (made in the Hub, say), and moves it with its timeline and tasks. In one read, a
+  name-only row in one tab and a row with an email in another for the same name become one contact
+  (listed under "skipped" as "Merged"); while a contact tab has a missing column, name-only rows
+  wait instead of being created.
 - **Stage and next step: whichever changed last.** Each sync stores what the sheet said
   (`portal.sheetStage`, `portal.sheetNextStep`) and applies the sheet's value only when it differs
   from that, i.e. when someone changed that person in the sheet. A move made in the Hub stands
   until then. The sheet's Status column (Plan Interaction, Awaiting for Response) is the next step.
+  The **name** follows the same rule (`portal.sheetName`), so a correction made in the Hub sticks.
 - New meetings from the last 14 days with a Target, Aware or Teaser contact give the owner a task
   "move to the next stage?" (automation `meeting-next-stage`) for its owner, or whoever last moved
   it in the Hub; nobody is moved automatically. A meeting also closes the contact's open "check in"
-  task and clears "needs attention". A stage the sheet changes clears the Hub's loss reason.
+  task and clears "needs attention". A stage the sheet changes clears the Hub's loss reason and "needs attention", and
+  closes the old stage's automation tasks (on Fellows or Lost, the next-step task too).
 - Sync writes set `portal.syncedAt`; `crmContactWritten` ignores them, so imports fire no
   follow-up or next-step task.
 - **Health:** the FLF Portal sheet check reads every tab and reports a missing column (someone
@@ -63,5 +71,10 @@ Firestore; Claude's `flf_get_contact` shows the portal fields but no PERMA or in
   appends its explanation (`#DIV/0! (Function DIVIDE parameter 2 cannot be zero.)`).
 - A contact's open automation tasks belong to its owner. That one-time correction (`sheetDates`) also
   hands over tasks left with whoever moved the contact before an owner was set in the Hub.
+- **Amounts** are read as the sheet displays them: `€40,000`, `1,250,000`, `40.000,50` and
+  `12,5` are 40000, 1250000, 40000.5 and 12.5 (a `.` or `,` before exactly three digits groups
+  thousands). An impossible date (31/02, month 13) is read as no date.
+- **Tasks deleted from the sheet** are marked done with `removedFromSheet` (kept, not deleted), only
+  after a whole read of the Tasks tab; one back in the sheet takes its status from there again.
 - Rows not imported (team members, unknown stages, test applications) are listed in the
   import's run log under "skipped".

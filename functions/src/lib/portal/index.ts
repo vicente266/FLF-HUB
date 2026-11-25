@@ -87,23 +87,34 @@ export function toTab(values: string[][], columns: readonly string[]): Tab {
 	return { rows, missing, truncated };
 }
 
-/** `dd/mm/yyyy`, `yyyy-mm-dd` or a sheet date as a Date, else null. */
+/** A calendar day at noon UTC, or null when it doesn't exist (month 13, 31/02). */
+function day(y: number, m: number, d: number): Date | null {
+	const date = new Date(Date.UTC(y, m - 1, d, 12));
+	return date.getUTCMonth() === m - 1 && date.getUTCDate() === d ? date : null;
+}
+
+/** `dd/mm/yyyy`, `yyyy-mm-dd` or a sheet date as a Date, else null (also for impossible dates). */
 export function parseDate(value: string): Date | null {
 	const v = norm(value);
 	let m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(v);
-	if (m) return new Date(Date.UTC(+m[3], +m[2] - 1, +m[1], 12));
+	if (m) return day(+m[3], +m[2], +m[1]);
 	m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
-	if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 12));
+	if (m) return day(+m[1], +m[2], +m[3]);
 	return null;
 }
 
-const num = (v: string) => {
-	const n = Number(
-		norm(v)
-			.replace(/[^\d.,-]/g, '')
-			.replace(',', '.')
-	);
-	return Number.isFinite(n) && norm(v) !== '' ? n : null;
+/**
+ * An amount as the sheet displays it ("€40,000", "40.000,50", "12,5"). A `.` or `,` followed by
+ * exactly three digits (then the end or another separator) groups thousands; a remaining one is
+ * the decimal point.
+ */
+export const num = (v: string) => {
+	const s = norm(v)
+		.replace(/[^\d.,-]/g, '')
+		.replace(/[.,](?=\d{3}(?:[.,]|$))/g, '')
+		.replace(',', '.');
+	const n = Number(s);
+	return /\d/.test(s) && Number.isFinite(n) ? n : null;
 };
 const yes = (v: string) => ['true', 'yes', 'sí', 'si', '1', 'x'].includes(lower(v));
 
@@ -176,20 +187,27 @@ export function plan(
 	}
 
 	const byId = new Map<string, { data: Record<string, unknown>; from: string }>();
+	// Earlier sources win the stage; later ones only fill fields still empty.
+	const fill = (into: Record<string, unknown>, data: Record<string, unknown>) => {
+		for (const [k, v] of Object.entries(data)) {
+			if (Array.isArray(into[k]) && Array.isArray(v))
+				into[k] = [...new Set([...(into[k] as unknown[]), ...v])];
+			else if (into[k] === undefined || into[k] === '' || into[k] === null) into[k] = v;
+		}
+	};
 	const put = (id: string, data: Record<string, unknown>, from: string) => {
 		const prev = byId.get(id);
-		// Earlier sources win the stage; later ones only fill fields still empty.
 		if (!prev) byId.set(id, { data, from });
 		else {
-			for (const [k, v] of Object.entries(data)) {
-				if (Array.isArray(prev.data[k]) && Array.isArray(v))
-					prev.data[k] = [...new Set([...(prev.data[k] as unknown[]), ...v])];
-				else if (prev.data[k] === undefined || prev.data[k] === '' || prev.data[k] === null)
-					prev.data[k] = v;
-			}
+			fill(prev.data, data);
 			prev.from = `${prev.from}+${from}`;
 		}
 	};
+	// Ids a person may have had before: the whole Email cell, and the name alone (a row without
+	// an email), so an existing contact is moved instead of duplicated.
+	const legacyIdsOf = (email: string, name: string) => [
+		...new Set([legacyContactIdOf(email, name), contactIdOf('', name)])
+	];
 	// The sheet names a Sherpa or task owner by Username ("Aleks"), Name or first name; a Profiles
 	// row of the team (Admin, Sherpa) links those to an email, and the email to a Hub user.
 	const teamRows = tabs.profiles.missing.length
@@ -235,7 +253,7 @@ export function plan(
 			put(
 				contactIdOf(r['Email'], r['Name']),
 				{
-					legacyIds: [legacyContactIdOf(r['Email'], r['Name'])],
+					legacyIds: legacyIdsOf(r['Email'], r['Name']),
 					name: r['Name'] || r['Email'],
 					email: primaryEmail(r['Email']),
 					otherEmails: emailsOf(r['Email']).slice(1),
@@ -260,7 +278,7 @@ export function plan(
 			put(
 				contactIdOf(r['Email'], r['Name']),
 				{
-					legacyIds: [legacyContactIdOf(r['Email'], r['Name'])],
+					legacyIds: legacyIdsOf(r['Email'], r['Name']),
 					name: r['Name'] || r['Email'],
 					email: primaryEmail(r['Email']),
 					otherEmails: emailsOf(r['Email']).slice(1),
@@ -311,7 +329,7 @@ export function plan(
 			put(
 				contactIdOf(r['Email'], r['Name']),
 				{
-					legacyIds: [legacyContactIdOf(r['Email'], r['Name'])],
+					legacyIds: legacyIdsOf(r['Email'], r['Name']),
 					name: r['Name'] || r['Email'],
 					email: primaryEmail(r['Email']),
 					otherEmails: emailsOf(r['Email']).slice(1),
@@ -332,7 +350,47 @@ export function plan(
 		}
 	}
 
-	for (const [id, { data, from }] of byId) p.contacts.push({ id, data, from });
+	// A name-only row in one tab and a row with an email in another for the same name are one
+	// person: merged under the email's id (only when exactly one entry with an email has that name).
+	const entries = [...byId];
+	const mergedInto = new Map<string, string>();
+	entries.forEach(([id, e], i) => {
+		if (e.data.email) return;
+		const n = lower(e.data.name);
+		const matches = entries.filter(([, o]) => o.data.email && lower(o.data.name) === n);
+		if (matches.length !== 1) return;
+		const [toId, to] = matches[0];
+		const [first, second] = i < entries.indexOf(matches[0]) ? [e, to] : [to, e];
+		const data = { ...first.data };
+		fill(data, second.data);
+		byId.set(toId, { data, from: `${first.from}+${second.from}` });
+		byId.delete(id);
+		mergedInto.set(id, toId);
+		p.skipped.push(
+			`Merged: "${e.data.name}" (${e.from}, no email) into the ${to.from} row with ${to.data.email}`
+		);
+	});
+	// With a contact tab unreadable, a name-only row may be someone that tab has with an email:
+	// left for a whole read rather than created as a second contact.
+	const partial = (['crm', 'profiles', 'applications'] as TabKey[]).some(
+		(k) => tabs[k].missing.length
+	);
+	for (const [id, { data, from }] of byId) {
+		if (partial && !data.email) {
+			p.skipped.push(`${from}: "${data.name}" has no email; waits for a whole read of the sheet`);
+			continue;
+		}
+		p.contacts.push({ id, data, from });
+	}
+	p.finance = p.finance
+		.map((f) => {
+			const id = mergedInto.get(f.id) ?? f.id;
+			return { id, data: { ...f.data, contactId: id } };
+		})
+		.filter(
+			(f, i, all) =>
+				all.findIndex((x) => x.id === f.id) === i && p.contacts.some((c) => c.id === f.id)
+		);
 
 	if (!tabs.events.missing.length) {
 		// Participants are CRM names (n8n writes them): match them to the contacts above by name.
@@ -582,13 +640,26 @@ export async function run() {
 			seen(c.id, c.data[k]);
 	for (const e of p.events) for (const cid of e.data.contactIds) seen(cid, e.data.date);
 	const ts = (d: Date | undefined) => (d ? Timestamp.fromDate(d) : null);
+	// Another person's contact in this plan is never moved onto someone else's id.
+	const planIds = new Set(p.contacts.map((c) => c.id));
 
 	for (const c of p.contacts) {
 		const ref = crm.contacts.doc(c.id);
 		let doc = await ref.get();
 		if (!doc.exists) {
-			const legacy = ((c.data.legacyIds as string[] | undefined) ?? []).find((id) => id !== c.id);
-			if (legacy && (await moveContact(legacy, c.id))) doc = await ref.get();
+			// An earlier id of this person, else a Fellow contact with the same email (made in the Hub,
+			// say): moved to this id instead of a second contact. Reads only on a create.
+			for (const legacy of (c.data.legacyIds as string[] | undefined) ?? []) {
+				if (legacy === c.id || planIds.has(legacy)) continue;
+				if (await moveContact(legacy, c.id)) {
+					doc = await ref.get();
+					break;
+				}
+			}
+			const same = doc.exists ? null : await crm.findByEmail(String(c.data.email ?? ''));
+			if (same && same.data().type === 'fellow' && !planIds.has(same.id)) {
+				if (await moveContact(same.id, c.id)) doc = await ref.get();
+			}
 		}
 		const d = c.data;
 		const stage = String(d.stage);
@@ -608,6 +679,7 @@ export async function run() {
 			reasonsWhy: d.reasonsWhy || null,
 			lastInteraction: d.lastInteraction ?? null,
 			nextStep: d.nextStep || null,
+			sheetName: d.name,
 			sheetStage: stage,
 			sheetNextStep: nextStepFromSheet(String(d.nextStep ?? '')),
 			scoring: d.scoring || null,
@@ -652,8 +724,11 @@ export async function run() {
 			continue;
 		}
 		const cur = doc.data() as crm.Contact;
+		// The name, like the stage: the sheet's only when it changed there, so a Hub correction sticks.
+		// Without a stored sheetName, the stored name is the sheet's.
+		const lastSheetName = (cur.portal?.sheetName as string | undefined) ?? cur.name;
 		const update: Record<string, unknown> = {
-			name: d.name,
+			...(d.name !== lastSheetName ? { name: d.name } : {}),
 			company: d.company || cur.company,
 			linkedin: d.linkedin || cur.linkedin,
 			portal,
@@ -683,7 +758,13 @@ export async function run() {
 		if (cur.stage !== stage && cur.portal?.sheetStage !== stage) {
 			const label = (s: string) => stageOf(cur.type, s)?.label ?? s;
 			// The Hub's loss reason belongs to the stage it was given for.
-			Object.assign(update, { stage, open: !final, stageChangedAt: now, lostReason: '' });
+			Object.assign(update, {
+				stage,
+				open: !final,
+				stageChangedAt: now,
+				lostReason: '',
+				needsAttention: false
+			});
 			await ref.collection('activity').add({
 				kind: 'stage',
 				text: `${label(cur.stage)} → ${label(stage)} (from the portal sheet)`,
@@ -694,10 +775,12 @@ export async function run() {
 				at: now
 			});
 			// Sync writes skip crmContactWritten, so close the old stage's tasks here, as a Hub move does.
+			// A final stage has no next step left to work on.
 			await crm.closeAutomationTasks(c.id, [
 				'stage-follow-up',
 				'meeting-next-stage',
-				'stale-contacts'
+				'stale-contacts',
+				...(final ? ['next-step-task'] : [])
 			]);
 			moved++;
 		}
@@ -743,20 +826,40 @@ export async function run() {
 		const lastAssignee = prev ? (prev.sheetAssigneeUid ?? prev.assigneeUid) : undefined;
 		if (!prev || lastDone !== done) Object.assign(data, { done, cancelled });
 		if (!prev || lastAssignee !== assigneeUid) data.assigneeUid = assigneeUid;
+		// Back in the sheet after being removed: its status there applies again.
+		if (prev?.removedFromSheet) Object.assign(data, { done, cancelled, removedFromSheet: false });
 		b.set(crm.tasks.doc(t.id), data, { merge: true });
 		if (++n >= 400) await flush();
+	}
+	const whole = (k: TabKey) => !tabs[k].missing.length && !tabs[k].truncated;
+	// Tasks deleted from the sheet are closed, not deleted (their history stays). Only after a whole
+	// read of the Tasks tab.
+	let removedTasks = 0;
+	if (whole('tasks')) {
+		const keep = new Set(p.tasks.map((t) => t.id));
+		for (const [id, prev] of prevTasks) {
+			if (keep.has(id) || prev.removedFromSheet) continue;
+			b.update(crm.tasks.doc(id), {
+				done: true,
+				removedFromSheet: true,
+				doneAt: serverTimestamp(),
+				syncedAt: now
+			});
+			removedTasks++;
+			if (++n >= 400) await flush();
+		}
 	}
 	for (const w of p.wellbeing) {
 		b.set(wellbeing.doc(w.id), { ...w.data, syncedAt: now });
 		if (++n >= 400) await flush();
 	}
 	for (const f of p.finance) {
-		b.set(finance.doc(f.id), { ...f.data, syncedAt: now }, { merge: true });
+		// Replaced whole: these docs come only from the sheet, so a report removed there goes too.
+		b.set(finance.doc(f.id), { ...f.data, syncedAt: now });
 		if (++n >= 400) await flush();
 	}
 	// Health and money no longer in the sheet (or no longer a contact's) are removed, so they leave
 	// the cohort averages too. Only after a whole, unchanged read of their tabs. One read per doc.
-	const whole = (k: TabKey) => !tabs[k].missing.length && !tabs[k].truncated;
 	let removedHealth = 0;
 	// Who is a contact comes from these tabs: a partial read of any of them would make real Fellows
 	// look like strangers, and their data would be deleted.
@@ -857,6 +960,7 @@ export async function run() {
 		moved,
 		newMeetings: newMeetings.length,
 		removedEvents,
+		removedTasks,
 		removedHealthOrFinance: removedHealth
 	};
 	await connectionCollection.doc('portal-sheet').set(

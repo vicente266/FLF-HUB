@@ -73,7 +73,16 @@ const event = (names) => [
 	...Array(19 - names.length).fill('')
 ];
 
-function sheet({ annInEvent = true, renameProfilesColumn = false, taskStatus = 'To-do' } = {}) {
+function sheet({
+	annInEvent = true,
+	renameProfilesColumn = false,
+	taskStatus = 'To-do',
+	annName = 'Ann Aware',
+	annStage = 'FOF - They are Aware',
+	// Wealth reports of Ana's in the sheet: the first, or both.
+	wealthReports = 2,
+	tasks = true
+} = {}) {
 	const profiles = renameProfilesColumn
 		? PROFILES.map((h) => (h === 'Archetype' ? 'Archetype RENAMED' : h))
 		: PROFILES;
@@ -114,7 +123,11 @@ function sheet({ annInEvent = true, renameProfilesColumn = false, taskStatus = '
 				// As the real sheet returns it: the error with its explanation appended.
 				Growth: '#DIV/0! (Function DIVIDE parameter 2 cannot be zero.)',
 				'Sherpa Name': 'Bo'
-			})
+			}),
+			// Already in the Hub, made by hand with the same email.
+			row(PROFILES, { Email: 'dora@hub.io', Name: 'Dora Hub', Role: 'Fellow' }),
+			// The same person as the CRM tab's name-only "Eve Merge" row.
+			row(PROFILES, { Email: 'eve@merge.io', Name: 'Eve Merge', Role: 'Fellow' })
 		],
 		'CRM ': [
 			[
@@ -131,18 +144,7 @@ function sheet({ annInEvent = true, renameProfilesColumn = false, taskStatus = '
 			],
 			['Ana Fellow', 'ana.fellow@test.io', 'Fellowco', '', '', 'Fellows', '', '9', '', ''],
 			['Bea Fellow', 'bea@fellow.io', '', '2026-09-01', '', 'Fellows', '', '', '', ''],
-			[
-				'Ann Aware',
-				'ann@aware.io',
-				'Awareco',
-				'',
-				'Awaiting for Response',
-				'FOF - They are Aware',
-				'',
-				'7',
-				'',
-				''
-			],
+			[annName, 'ann@aware.io', 'Awareco', '', 'Awaiting for Response', annStage, '', '7', '', ''],
 			[
 				'Ted Teaser',
 				'ted@teaser.io, ted.alt@teaser.io',
@@ -154,7 +156,9 @@ function sheet({ annInEvent = true, renameProfilesColumn = false, taskStatus = '
 				'8',
 				'',
 				''
-			]
+			],
+			['Carl Crm', 'carl@crm.io', '', '', '', 'Targets', '', '', '', ''],
+			['Eve Merge', '', '', '', '', 'Targets', '', '', '', '']
 		],
 		Applications: [
 			[
@@ -184,7 +188,7 @@ function sheet({ annInEvent = true, renameProfilesColumn = false, taskStatus = '
 		],
 		Tasks: [
 			['Task', 'Owner', 'Status', 'Notes', 'Due Date', 'Task ID'],
-			['Prepare retreat', 'Vicente', taskStatus, '', '30/11/2026', 'T1']
+			...(tasks ? [['Prepare retreat', 'Vicente', taskStatus, '', '30/11/2026', 'T1']] : [])
 		],
 		Perma: [
 			[
@@ -241,30 +245,36 @@ function sheet({ annInEvent = true, renameProfilesColumn = false, taskStatus = '
 				'Net EUR',
 				'Value EUR'
 			],
-			[
-				'W1',
-				'ana.fellow@test.io',
-				'Ana Fellow',
-				'2026-07-01',
-				'Initial Financial Report',
-				'Work Income',
-				'',
-				'',
-				'',
-				'',
-				'',
-				'EUR',
-				'60000',
-				'40000',
-				'',
-				'60000',
-				'40000',
-				''
-			]
+			...wealthRows.slice(0, wealthReports)
 		],
 		Events: [EVENTS, event(annInEvent ? ['Ted Teaser', 'Ann Aware'] : ['Ted Teaser'])]
 	};
 }
+
+const wealthRow = (id, date, report, gross, net) => [
+	id,
+	'ana.fellow@test.io',
+	'Ana Fellow',
+	date,
+	report,
+	'Work Income',
+	'',
+	'',
+	'',
+	'',
+	'',
+	'EUR',
+	gross,
+	net,
+	'',
+	gross,
+	net,
+	''
+];
+const wealthRows = [
+	wealthRow('W1', '2026-07-01', 'Initial Financial Report', '60000', '40000'),
+	wealthRow('W2', '2026-10-01', 'Quarterly Report', '€65,000', '45.000,50')
+];
 
 const dir = mkdtempSync(join(tmpdir(), 'flf-portal-'));
 async function sync(name, options) {
@@ -305,8 +315,8 @@ await db.doc(`contact/${legacy}`).set({
 	ownerUid: 'u1',
 	ownerName: 'Vicente',
 	source: 'portal',
-	needsAttention: false,
 	portal: { sheetStage: 'aware', syncedAt: Ts.now() },
+	needsAttention: true,
 	lastActivityAt: Ts.now(),
 	createdAt: Ts.now()
 });
@@ -362,6 +372,65 @@ await db.doc('task/t3').set({
 	dueAt: Ts.now()
 });
 
+await db.doc('task/t4').set({
+	contactId: annId,
+	title: 'Plan the next interaction',
+	done: false,
+	automationId: 'next-step-task',
+	assigneeUid: 'u2',
+	dueAt: Ts.now()
+});
+
+// -- contacts that must be merged, not duplicated ----------------------------------------------
+
+// Saved by a name-only row before the sheet gave Carl an email.
+const carlOld = portal.contactIdOf('', 'Carl Crm');
+const fellowDoc = (name, email, source) => ({
+	type: 'fellow',
+	name,
+	email,
+	company: '',
+	linkedin: '',
+	phone: '',
+	tags: [],
+	notes: '',
+	stage: 'target',
+	open: true,
+	ownerUid: null,
+	ownerName: null,
+	source,
+	needsAttention: false,
+	lastActivityAt: Ts.now(),
+	createdAt: Ts.now()
+});
+await db.doc(`contact/${carlOld}`).set(fellowDoc('Carl Crm', '', 'portal'));
+await db
+	.doc(`contact/${carlOld}/activity/c1`)
+	.set({ kind: 'note', text: 'Carl note to keep', at: Ts.now() });
+// Made in the Hub by hand, with the email the sheet has.
+await db.doc('contact/manual-dora').set(fellowDoc('Dora Hub', 'dora@hub.io', 'manual'));
+
+console.log('Amounts and dates');
+const amounts = {
+	40000: 40000,
+	'€40,000': 40000,
+	'1,250,000': 1250000,
+	'40.000,50': 40000.5,
+	'40,000.50': 40000.5,
+	'12,5': 12.5,
+	'-3,000': -3000,
+	'': null
+};
+for (const [text, expected] of Object.entries(amounts))
+	check(portal.num(text) === expected, `amount "${text}" reads as ${expected}`);
+check(
+	portal.parseDate('31/02/2026') === null &&
+		portal.parseDate('10/13/2026') === null &&
+		portal.parseDate('2026-02-30') === null &&
+		portal.parseDate('29/02/2028')?.toISOString().startsWith('2028-02-29'),
+	'an impossible date reads as no date'
+);
+
 console.log('First sync');
 const first = await sync('first');
 check(legacy !== fresh, 'a multi-email cell changes the contact id');
@@ -412,6 +481,34 @@ check(
 	(await db.doc('task/t3').get()).data().assigneeUid === 'u1',
 	'a manual task keeps its assignee'
 );
+const byName = async (name) =>
+	(await db.collection('contact').where('name', '==', name).get()).docs;
+check(
+	(await db.doc(`contact/${fresh}`).get()).data().needsAttention === false,
+	'a stage move from the sheet clears “needs attention”'
+);
+const carl = await byName('Carl Crm');
+check(
+	carl.length === 1 &&
+		carl[0].id === portal.contactIdOf('carl@crm.io', 'Carl Crm') &&
+		(await exists(`contact/${carl[0].id}/activity/c1`)),
+	'a contact saved under the name-only id moves to the email id'
+);
+const dora = await byName('Dora Hub');
+check(
+	dora.length === 1 &&
+		dora[0].id === portal.contactIdOf('dora@hub.io', 'Dora Hub') &&
+		dora[0].data().source === 'manual',
+	'a Hub contact with the same email is merged, not duplicated'
+);
+const eve = await byName('Eve Merge');
+check(
+	eve.length === 1 &&
+		eve[0].id === portal.contactIdOf('eve@merge.io', 'Eve Merge') &&
+		eve[0].data().stage === 'target' &&
+		first.skipped.some((s) => s.startsWith('Merged: "Eve Merge"')),
+	'a name-only CRM row and a Profiles row with an email are one contact, listed as merged'
+);
 
 console.log('Second sync, same sheet');
 const second = await sync('second');
@@ -449,8 +546,55 @@ const before = (await db.collection('wellbeing').get()).size;
 const fourth = await sync('fourth', { annInEvent: false, renameProfilesColumn: true });
 check(Boolean(fourth.drift.Profiles), 'the renamed column is reported as drift');
 check(
+	fourth.created === 0 && (await byName('Eve Merge')).length === 1,
+	'a name-only row is not created while its email row is unreadable'
+);
+check(
 	before > 0 && (await db.collection('wellbeing').get()).size === before,
 	'a partial read deletes no wellbeing data'
+);
+
+console.log('A name corrected in the Hub');
+const annRef = db.doc(`contact/${ann}`);
+await annRef.update({ name: 'Ann A. Aware' });
+await sync('name-hub');
+check((await annRef.get()).data().name === 'Ann A. Aware', 'a name corrected in the Hub sticks');
+await sync('name-sheet', { annName: 'Ann Awarest' });
+check((await annRef.get()).data().name === 'Ann Awarest', 'a name changed in the sheet is applied');
+
+console.log('Finance report removed from the sheet');
+const anaMoney = db.doc(`fellowFinance/${portal.contactIdOf('ana.fellow@test.io', 'Ana Fellow')}`);
+const quarterly = (await anaMoney.get()).data().reports['Quarterly Report (2026-10-01)'];
+check(
+	quarterly?.['Work Income'].gross === 65000 && quarterly['Work Income'].net === 45000.5,
+	'report amounts with thousands separators are read whole'
+);
+await sync('one-report', { annName: 'Ann Awarest', wealthReports: 1 });
+check(
+	Object.keys((await anaMoney.get()).data().reports).join() ===
+		'Initial Financial Report (2026-07-01)',
+	'a report removed from the sheet leaves the Hub'
+);
+
+console.log('Task removed from the sheet');
+await sync('no-tasks', { annName: 'Ann Awarest', tasks: false });
+const gone = (await sheetTask.ref.get()).data();
+check(
+	gone.done === true && gone.removedFromSheet === true,
+	'a sheet task deleted from the sheet is closed and kept'
+);
+await sync('tasks-back', { annName: 'Ann Awarest' });
+const back = (await sheetTask.ref.get()).data();
+check(
+	back.removedFromSheet === false && back.done === false,
+	'and reopens when it is back in the sheet'
+);
+
+console.log('The sheet moves a contact to a final stage');
+await sync('ann-fellow', { annName: 'Ann Awarest', annStage: 'Fellows' });
+check(
+	(await db.doc('task/t4').get()).data().done === true,
+	'a final stage closes the next-step task'
 );
 
 console.log(`\n${checks} checks passed`);
