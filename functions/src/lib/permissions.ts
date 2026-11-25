@@ -21,6 +21,9 @@ export const PERMISSIONS = [
 	'wellbeing.any.read',
 	// Fellows' income and financial reports.
 	'wealth.any.read',
+	// FLF TV: the clip queue (read) and reviewing clips and editing the skills (write).
+	'tv.any.read',
+	'tv.any.write',
 	// Connect Claude to the Hub (the MCP connector). No admin bypass: admins need it too.
 	'claude.self.connect'
 ] as const;

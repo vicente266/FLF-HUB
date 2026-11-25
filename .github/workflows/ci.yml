@@ -71,3 +71,18 @@ jobs:
       - run: npm install -g firebase-tools@15
       - name: Portal import against the Firestore emulator
         run: npm test
+
+  tv-worker:
+    name: FLF TV worker (types and self-test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: tv-worker/package-lock.json
+      - run: npm ci --prefix tv-worker
+      - run: npm --prefix tv-worker run check
+      - run: npm --prefix tv-worker test

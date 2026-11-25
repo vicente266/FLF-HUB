@@ -21,6 +21,7 @@ import * as health from './lib/health/index';
 import * as claude from './lib/mcp/index';
 import * as knowledge from './lib/knowledge/index';
 import * as portal from './lib/portal/index';
+import * as tv from './lib/tv/index';
 
 setGlobalOptions({ maxInstances: 10, region: REGION });
 
@@ -138,7 +139,26 @@ export const coreAction = onCall(
 		'claude.admin.revoke': {
 			adminOnly: true,
 			handler: async (p) => claude.connections.revoke(p.id)
-		}
+		},
+		// FLF TV (docs/flf-tv.md). On coreAction like knowledge.*: see CLAUDE.md, "Add an action".
+		/** FLF TV statuses, skill ids and the default brand settings. */
+		'tv.config.get': { permission: 'tv.any.read', handler: tv.actions['config.get'] },
+		/** Queue a Google Drive video for the Mac worker. */
+		'tv.video.add': { permission: 'tv.any.write', handler: tv.actions['video.add'] },
+		/** Process a video again (new suggestions replace the old ones). */
+		'tv.video.retry': { permission: 'tv.any.write', handler: tv.actions['video.retry'] },
+		/** Delete a video, its transcript and its clips (the Drive files stay). */
+		'tv.video.delete': { permission: 'tv.any.write', handler: tv.actions['video.delete'] },
+		/** Edit a clip's times, hook, caption, hashtags or framing. */
+		'tv.clip.update': { permission: 'tv.any.write', handler: tv.actions['clip.update'] },
+		/** Approve (to render), reject, or reopen a clip. */
+		'tv.clip.status': { permission: 'tv.any.write', handler: tv.actions['clip.status'] },
+		/** A skill (Clipping or Brand) as the worker will read it. */
+		'tv.skill.get': { permission: 'tv.any.read', handler: tv.actions['skill.get'] },
+		/** Save a skill; the next video uses it. */
+		'tv.skill.save': { permission: 'tv.any.write', handler: tv.actions['skill.save'] },
+		/** Back to the built-in skill. */
+		'tv.skill.reset': { permission: 'tv.any.write', handler: tv.actions['skill.reset'] }
 	})
 );
 

@@ -1,0 +1,26 @@
+{
+	"name": "flf-tv-worker",
+	"private": true,
+	"type": "module",
+	"description": "FLF TV worker: runs on a Mac, turns queued Google Drive videos into branded vertical clips.",
+	"scripts": {
+		"start": "tsx src/index.ts",
+		"once": "tsx src/index.ts --once",
+		"check": "tsc --noEmit",
+		"test": "tsx src/selftest.ts"
+	},
+	"engines": {
+		"node": ">=20"
+	},
+	"dependencies": {
+		"@anthropic-ai/sdk": "^1.14.0",
+		"firebase-admin": "^13.10.0",
+		"google-auth-library": "^10.9.1",
+		"zod": "^4.2.0"
+	},
+	"devDependencies": {
+		"@types/node": "^24.13.3",
+		"tsx": "^4.19.2",
+		"typescript": "^6.0.3"
+	}
+}

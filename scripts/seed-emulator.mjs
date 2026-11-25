@@ -48,7 +48,9 @@ const GROUPS = {
 			'health.any.read',
 			'claude.self.connect',
 			'wellbeing.any.read',
-			'wealth.any.read'
+			'wealth.any.read',
+			'tv.any.read',
+			'tv.any.write'
 		]
 	}
 };
@@ -157,4 +159,100 @@ for (const [i, [type, name, email, company, stage, source, days]] of CONTACTS.en
 		});
 	}
 }
+// FLF TV: one processed video with topics and three clips in different states.
+await db.doc('tvVideo/tv-demo').set({
+	title: 'FLF Podcast #12 — Aleks on the long game',
+	driveFileId: 'demo',
+	driveUrl: 'https://drive.google.com',
+	status: 'review',
+	step: null,
+	error: null,
+	durationSec: 2710,
+	clipCount: 3,
+	createdBy: 'Vicente Admin',
+	createdAt: ago(0),
+	topics: [
+		{
+			start: 0,
+			end: 412.5,
+			title: 'Why founders quit too early',
+			summary: 'The long game and the moment most people give up.'
+		},
+		{
+			start: 413.1,
+			end: 1290.4,
+			title: 'Selling a company and loneliness',
+			summary: 'What the first exit felt like and nobody tells you.'
+		},
+		{
+			start: 1291,
+			end: 2710,
+			title: 'What a Sherpa is for',
+			summary: 'Honest feedback from people who made the climb.'
+		}
+	]
+});
+const clipBase = {
+	videoId: 'tv-demo',
+	videoTitle: 'FLF Podcast #12 — Aleks on the long game',
+	focusX: 0.5,
+	hashtags: ['#founders', '#longgame'],
+	error: null,
+	updatedAt: ago(0),
+	createdAt: ago(0)
+};
+await db.doc('tvClip/c0').set({
+	...clipBase,
+	index: 0,
+	start: 88.62,
+	end: 141.3,
+	hook: 'Most founders quit right before it works',
+	title: 'Quit too early',
+	caption: 'The long game is the only game. Most people stop one step short.',
+	reason: 'Strong opening claim, payoff in the last line.',
+	score: 9,
+	status: 'rendered',
+	startCut: 'silence',
+	endCut: 'silence',
+	startPause: 0.9,
+	endPause: 1.2,
+	renderUrl: 'https://drive.google.com',
+	coverUrl: 'https://drive.google.com',
+	thumbnailUrl: 'https://drive.google.com',
+	coverWhy: 'Both hosts laughing, faces sharp.'
+});
+await db.doc('tvClip/c1').set({
+	...clipBase,
+	index: 1,
+	start: 702.4,
+	end: 760.9,
+	hook: 'Selling my company made me lonely',
+	title: 'Lonely exit',
+	caption: 'Nobody tells you this part.',
+	reason: 'Personal story, starts at a new topic after a long pause.',
+	score: 8,
+	status: 'rendering',
+	startCut: 'silence',
+	endCut: 'silence',
+	startPause: 1.4,
+	endPause: 0.7,
+	renderUrl: null
+});
+await db.doc('tvClip/c2').set({
+	...clipBase,
+	index: 2,
+	start: 1402.1,
+	end: 1449,
+	hook: 'A Sherpa tells you what friends won’t',
+	title: 'Sherpas',
+	caption: 'Honesty from someone who made the climb.',
+	reason: 'Clear idea; the end falls on a word.',
+	score: 7,
+	status: 'suggested',
+	startCut: 'silence',
+	endCut: 'word',
+	startPause: 0.6,
+	endPause: 0,
+	renderUrl: null
+});
 console.log('Seeded. Sign in as admin@foundersforlifefellowship.com / flf-local-123');

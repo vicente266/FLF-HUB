@@ -15,7 +15,9 @@ Route in `src/routes/(app)/<feature>/`, UI in `src/lib/components/<feature>/`, t
 - **Add an action, never an export.** Each feature has one `<feature>Action` dispatcher in
   `functions/src/index.ts`; a new operation is an entry with `permission` (or `adminOnly`) and
   a one-line JSDoc. Only non-callable triggers (`onRequest`, `onSchedule`,
-  `onDocumentWritten`) get their own export.
+  `onDocumentWritten`) get their own export. Exception: a new callable needs Cloud Run's invoker
+  check turned off by hand (the organisation blocks public access), so small features put their
+  actions on `coreAction` as `<feature>.<action>` (`knowledge.*`, `claude.*`, `tv.*`).
 - **One definition only.** Pipelines, automations, connections and permissions are defined in
   `functions/src/lib/**/config.ts` and fetched by the UI through `config.get` actions. Never copy
   them into `src/`.

@@ -12,6 +12,7 @@ import HeartPulse from '@lucide/svelte/icons/heart-pulse';
 import UserCog from '@lucide/svelte/icons/user-cog';
 import Shield from '@lucide/svelte/icons/shield';
 import Sparkles from '@lucide/svelte/icons/sparkles';
+import Clapperboard from '@lucide/svelte/icons/clapperboard';
 
 export interface NavItem {
 	href: string;
@@ -37,6 +38,7 @@ export const NAVIGATION: NavSection[] = [
 			{ href: '/events', label: 'Events', icon: CalendarDays, permission: 'crm.any.read' },
 			{ href: '/gtm', label: 'Go-to-market', icon: Target, permission: 'crm.any.read' },
 			{ href: '/reports', label: 'Reports', icon: ChartColumn, permission: 'reports.any.read' },
+			{ href: '/tv', label: 'FLF TV', icon: Clapperboard, permission: 'tv.any.read' },
 			{
 				href: '/knowledge',
 				label: 'Knowledge',
