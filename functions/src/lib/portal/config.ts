@@ -8,6 +8,12 @@
 /** The sheet's id, unless the Connections card overrides it. */
 export const DEFAULT_SPREADSHEET_ID = '1n0vJ2dzxS4Y4tmrCCe5X8RAe_qa4gLlEYNBVl8tnF5Y';
 
+/**
+ * How the Hub names a meeting type of the Events tab, when the sheet's value differs. The sheet and
+ * the calendar flow keep their own value; titles stay as people write them.
+ */
+export const EVENT_TYPE_LABELS: Record<string, string> = { '1-2-1': '1:1 Mentorship' };
+
 /** Participant columns of the Events tab (Participant1 … Participant19). */
 export const EVENT_PARTICIPANTS = 19;
 

@@ -66,7 +66,7 @@ const EVENTS = [
 const event = (names) => [
 	'TRUE',
 	'Intro call',
-	'Meeting',
+	'1-2-1',
 	'2026-11-20',
 	'',
 	...names,
@@ -403,6 +403,10 @@ const beaMoney = (
 check(
 	beaMoney.growth === '',
 	'a spreadsheet error (#DIV/0! with its explanation) is read as empty'
+);
+check(
+	(await db.collection('event').get()).docs[0]?.data().type === '1:1 Mentorship',
+	'the sheet’s meeting type 1-2-1 is shown as 1:1 Mentorship'
 );
 check(
 	(await db.doc('task/t2').get()).data().assigneeUid === 'u2',

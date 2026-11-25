@@ -8,6 +8,7 @@ import { readSheet, collection as connectionCollection } from '../connections/in
 import {
 	DEFAULT_SPREADSHEET_ID,
 	EVENT_PARTICIPANTS,
+	EVENT_TYPE_LABELS,
 	MAX_ROWS,
 	STAGE_MAP,
 	TABS,
@@ -357,7 +358,7 @@ export function plan(
 				id,
 				data: {
 					title: r['Title'],
-					type: r['Type'].replace(/^'/, ''),
+					type: ((t) => EVENT_TYPE_LABELS[t] ?? t)(r['Type'].replace(/^'/, '')),
 					date,
 					description: r['Description'],
 					showInPortal: yes(r['Show in portal']),
