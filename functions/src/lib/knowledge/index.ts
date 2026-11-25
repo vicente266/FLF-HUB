@@ -340,6 +340,8 @@ export async function listFolder(): Promise<{
 	complete: boolean;
 	/** Shortcuts to folders the Hub can't open (not shared with it), by path. */
 	unshared: string[];
+	/** Subfolders walked (shortcuts to folders included). */
+	folders: number;
 }> {
 	const id = await folderId();
 	const client = await drive();
@@ -416,11 +418,17 @@ export async function listFolder(): Promise<{
 			}
 			pageToken = res.data.nextPageToken ?? '';
 			if (files.length >= MAX_ENTRIES) {
-				return { folderId: id, files: files.slice(0, MAX_ENTRIES), complete: false, unshared };
+				return {
+					folderId: id,
+					files: files.slice(0, MAX_ENTRIES),
+					complete: false,
+					unshared,
+					folders: seen.size - 1
+				};
 			}
 		} while (pageToken);
 	}
-	return { folderId: id, files, complete, unshared };
+	return { folderId: id, files, complete, unshared, folders: seen.size - 1 };
 }
 
 async function textOf(f: DriveFile): Promise<string> {

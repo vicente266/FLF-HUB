@@ -256,6 +256,15 @@
 	}
 
 	const firstLine = (e: KnowledgeEntry) => e.description.split('\n').find((l) => l.trim()) ?? '';
+	// The opening lines as one paragraph (a first line often ends in ":"); the title is shown above.
+	const excerpt = (e: KnowledgeEntry) =>
+		e.description
+			.split('\n')
+			.map((l) => l.trim())
+			.filter(Boolean)
+			.slice(e.label ? 0 : 1, 4)
+			.join(' ')
+			.slice(0, 300);
 	// `YYYY-MM-DD` read as that calendar day (noon UTC), whatever the viewer's time zone.
 	const day = (iso: string) => formatDate(new Date(`${iso}T12:00:00Z`));
 	const USE_TONE: Record<KnowledgeUse, string> = {
@@ -400,6 +409,7 @@
 								>
 									{e.label || firstLine(e)}
 								</button>
+								<p class="mt-0.5 line-clamp-2 text-xs text-ink-soft">{excerpt(e)}</p>
 								{#if e.useWhen}
 									<div class="mt-0.5 text-ink">{e.useWhen}</div>
 								{:else if canWrite}

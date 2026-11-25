@@ -2,7 +2,6 @@ import { CONNECTORS } from '../connections/config';
 import * as connections from '../connections/index';
 import { AUTOMATIONS } from '../automations/config';
 import * as automations from '../automations/index';
-import * as crm from '../crm/index';
 
 export type Level = 'ok' | 'warning' | 'error' | 'off';
 
@@ -15,13 +14,12 @@ const RUN_STALE = 48 * HOUR;
 
 /**
  * Everything that can break, in one list: each connection's last check, each automation's last
- * run, and how fresh the data is. Reads one document per connection and automation.
+ * run. Reads one document per connection and automation.
  */
 export async function get() {
-	const [conns, autos, lastContact] = await Promise.all([
+	const [conns, autos] = await Promise.all([
 		connections.collection.get(),
-		automations.collection.get(),
-		crm.contacts.orderBy('createdAt', 'desc').limit(1).get()
+		automations.collection.get()
 	]);
 	const connState = new Map(conns.docs.map((d) => [d.id, d.data()]));
 	const autoState = new Map(autos.docs.map((d) => [d.id, d.data()]));
@@ -81,7 +79,6 @@ export async function get() {
 	return {
 		overall,
 		connections: connectionRows,
-		automations: automationRows,
-		data: { lastContactAt: ms(lastContact.docs[0]?.data().createdAt) }
+		automations: automationRows
 	};
 }

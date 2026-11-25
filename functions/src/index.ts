@@ -227,6 +227,8 @@ export const automationsAction = onCall(
 		},
 		/** Turn an automation on or off. */
 		toggle: { permission: 'automations.any.write', handler: automations.actions.toggle },
+		/** Mark an automation's last failure as dealt with (it leaves Health until the next run). */
+		resolve: { permission: 'automations.any.write', handler: automations.actions.resolve },
 		/** Every n8n workflow with its status, last run and recent failures (read only). */
 		'n8n.workflows': {
 			permission: 'automations.any.read',

@@ -68,5 +68,4 @@ export interface Health {
 		runs: number;
 		errors: number;
 	}[];
-	data: { lastContactAt: number | null };
 }

@@ -54,6 +54,8 @@
 	}
 	let n8n = $state<N8nWorkflow[] | null>(null);
 	let n8nError = $state<string | null>(null);
+	// Inactive ones (old tests, retired flows) hidden unless asked for.
+	let showInactive = $state(false);
 	function loadN8n() {
 		n8nError = null;
 		callAction<{ workflows: N8nWorkflow[] }>('automations:n8n.workflows')
@@ -221,7 +223,10 @@
 						{n8n.filter((w) => w.active).length} active of {n8n.length} · read only
 					</span>{/if}
 			</div>
-			<div class="flex items-center gap-2">
+			<div class="flex items-center gap-3">
+				<label class="flex items-center gap-1.5 text-xs text-ink-soft">
+					<input type="checkbox" bind:checked={showInactive} /> Show inactive
+				</label>
 				<button class="btn-ghost text-xs" onclick={loadN8n}>Refresh</button>
 			</div>
 		</div>
@@ -231,7 +236,7 @@
 			<p class="px-4 py-4 text-sm text-ink-soft">Reading n8n…</p>
 		{:else}
 			<ul class="divide-y divide-line/40">
-				{#each n8n as w (w.id)}
+				{#each n8n.filter((w) => showInactive || w.active) as w (w.id)}
 					<li class="flex items-center gap-3 px-4 py-2 text-sm">
 						<span
 							class="h-2 w-2 shrink-0 rounded-full {w.active ? 'bg-success' : 'bg-line'}"

@@ -191,7 +191,13 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 					.join(' · ');
 				if (drift.length)
 					return { status: 'error', detail: `The sheet's columns changed: ${drift.join('; ')}` };
-				return { status: 'ok', detail: `All columns found. Rows: ${rows}` };
+				// Rows and contacts differ on purpose (team rows, merges): say how, so no one hunts a lost row.
+				const p = portal.plan(tabs, []);
+				const left = p.skipped.length ? ` Not imported as contacts: ${p.skipped.join('; ')}.` : '';
+				return {
+					status: 'ok',
+					detail: `All columns found. Rows: ${rows}. Contacts: ${p.contacts.length}.${left}`
+				};
 			}
 			case 'checkly': {
 				if (!secrets.checklyApiKey || !settings.accountId) {
@@ -253,7 +259,7 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 			case 'knowledge-folder': {
 				// Lazy: knowledge is not needed by the other checks.
 				const knowledge = await import('../knowledge/index.js');
-				const { files, unshared } = await knowledge.listFolder();
+				const { files, folders, unshared } = await knowledge.listFolder();
 				if (unshared.length)
 					return {
 						status: 'error',
@@ -269,7 +275,7 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 				).length;
 				return {
 					status: 'ok',
-					detail: `${files.length} files in the folder and its subfolders, ${readable} importable (Google Docs, text, Markdown).`
+					detail: `${files.length} files in ${folders + 1} folders (the Knowledge folder and ${folders} subfolders), ${readable} importable (Google Docs, text, Markdown).`
 				};
 			}
 			case 'claude-connector': {

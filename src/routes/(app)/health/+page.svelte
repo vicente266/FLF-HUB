@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import { callAction, errorText } from '$lib/actions';
-	import { setTitle, relative, formatDateTime } from '$lib/utils';
+	import { setTitle, relative, formatDateTime, hasPermission } from '$lib/utils';
 	import type { Health, Level } from '$lib/types/connections';
 	import StatusDot from '$lib/components/shared/StatusDot.svelte';
 	import FormError from '$lib/components/shared/FormError.svelte';
@@ -25,6 +25,17 @@
 		}
 	}
 	onMount(load);
+
+	const canResolve = hasPermission('automations.any.write');
+	async function resolve(id: string) {
+		error = null;
+		try {
+			await callAction('automations:resolve', { id });
+			await load();
+		} catch (e) {
+			error = errorText(e);
+		}
+	}
 
 	/** Check every connection now, then show the fresh results (Refresh alone only re-reads them). */
 	async function checkNow() {
@@ -62,10 +73,8 @@
 			<div>
 				<StatusDot level={health.overall} label={text} />
 				<p class="mt-1 text-xs text-ink-soft">
-					Connections are checked every hour, or now with Check now. Last new contact: {health.data
-						.lastContactAt
-						? relative(health.data.lastContactAt)
-						: 'none yet'}.
+					Connections are checked every hour, or now with Check now. A failure already dealt with
+					can be marked resolved.
 				</p>
 			</div>
 			<button class="btn-ghost" onclick={checkNow} disabled={loading}>
@@ -113,6 +122,14 @@
 							<td class="px-4 py-2 text-xs {a.lastError ? 'text-danger' : 'text-ink-soft'}">
 								{a.lastError ??
 									`${a.runs} ${a.runs === 1 ? 'run' : 'runs'} · ${a.errors} ${a.errors === 1 ? 'error' : 'errors'}`}
+								{#if a.lastError && canResolve}
+									<button
+										class="ml-2 font-semibold text-primary-700 hover:underline"
+										onclick={() => resolve(a.id)}
+									>
+										Mark resolved
+									</button>
+								{/if}
 							</td>
 							<td class="w-40 px-4 py-2 text-right text-xs text-ink-soft">
 								{a.lastRunAt ? `ran ${formatDateTime(a.lastRunAt)}` : 'never ran'}

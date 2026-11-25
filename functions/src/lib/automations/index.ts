@@ -240,5 +240,14 @@ export const actions = {
 		if (!automation(id)) throw new HttpsError('not-found', 'Unknown automation.');
 		await collection.doc(id).set({ enabled: p.enabled === true }, { merge: true });
 		return { ok: true };
+	},
+
+	/** A failure someone has dealt with: its error leaves Health until the next run. */
+	resolve: async (p: any, auth: any) => {
+		const id = str(p.id, 'id');
+		if (!automation(id)) throw new HttpsError('not-found', 'Unknown automation.');
+		const by = auth?.token?.name || auth?.token?.email || 'someone';
+		await collection.doc(id).set({ lastError: null, resolvedBy: by }, { merge: true });
+		return { ok: true };
 	}
 };
