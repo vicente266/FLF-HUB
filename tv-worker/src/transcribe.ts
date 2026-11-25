@@ -1,22 +1,26 @@
 import { readFileSync } from 'node:fs';
 import { config } from './config.js';
-import { run } from './run.js';
+import { run, TIMEOUT } from './run.js';
 import type { Silence, Word } from './types.js';
 import { gapsFromWords, pauseAfter } from './silences.js';
 
 /** The video's length in seconds and its frame size. */
 export async function probe(path: string) {
-	const out = await run(config.ffprobe, [
-		'-v',
-		'error',
-		'-select_streams',
-		'v:0',
-		'-show_entries',
-		'stream=width,height:format=duration',
-		'-of',
-		'json',
-		path
-	]);
+	const out = await run(
+		config.ffprobe,
+		[
+			'-v',
+			'error',
+			'-select_streams',
+			'v:0',
+			'-show_entries',
+			'stream=width,height:format=duration',
+			'-of',
+			'json',
+			path
+		],
+		TIMEOUT.probe
+	);
 	const j = JSON.parse(out) as {
 		streams?: { width: number; height: number }[];
 		format?: { duration?: string };
@@ -28,21 +32,11 @@ export async function probe(path: string) {
 
 /** 16 kHz mono WAV, what whisper.cpp reads. */
 export async function extractAudio(video: string, wav: string) {
-	await run(config.ffmpeg, [
-		'-y',
-		'-v',
-		'error',
-		'-i',
-		video,
-		'-vn',
-		'-ac',
-		'1',
-		'-ar',
-		'16000',
-		'-c:a',
-		'pcm_s16le',
-		wav
-	]);
+	await run(
+		config.ffmpeg,
+		['-y', '-v', 'error', '-i', video, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', wav],
+		TIMEOUT.ffmpeg
+	);
 }
 
 /**
@@ -65,21 +59,25 @@ export async function transcribe(
 	if (config.fakeTranscript)
 		raw = JSON.parse(readFileSync(config.fakeTranscript, 'utf8')) as Word[];
 	else {
-		await run(config.whisperCmd, [
-			'-m',
-			config.whisperModel,
-			'-f',
-			wav,
-			'-l',
-			config.whisperLanguage,
-			'--max-len',
-			'1',
-			'--split-on-word',
-			'--output-json',
-			'--output-file',
-			outBase,
-			'--no-prints'
-		]);
+		await run(
+			config.whisperCmd,
+			[
+				'-m',
+				config.whisperModel,
+				'-f',
+				wav,
+				'-l',
+				config.whisperLanguage,
+				'--max-len',
+				'1',
+				'--split-on-word',
+				'--output-json',
+				'--output-file',
+				outBase,
+				'--no-prints'
+			],
+			TIMEOUT.whisper
+		);
 		const j = JSON.parse(readFileSync(`${outBase}.json`, 'utf8')) as {
 			transcription: { offsets: { from: number; to: number }; text: string }[];
 		};

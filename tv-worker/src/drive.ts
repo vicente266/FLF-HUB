@@ -25,14 +25,25 @@ export async function fileInfo(id: string) {
 	return (await res.json()) as { name: string; mimeType: string; size?: string };
 }
 
+/** A download still running after this is aborted, so a hung one fails its job. */
+const DOWNLOAD_TIMEOUT_MS = 3_600_000;
+
 /** Download a Drive file to `dest`, streamed (videos are large). */
 export async function download(id: string, dest: string): Promise<void> {
-	const res = await fetch(
-		`https://www.googleapis.com/drive/v3/files/${id}?alt=media&supportsAllDrives=true`,
-		{ headers: { Authorization: `Bearer ${await token()}` } }
-	);
-	if (!res.ok || !res.body) throw new Error(`Drive download failed: ${res.status}.`);
-	await pipeline(Readable.fromWeb(res.body as never), createWriteStream(dest));
+	const signal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+	try {
+		const res = await fetch(
+			`https://www.googleapis.com/drive/v3/files/${id}?alt=media&supportsAllDrives=true`,
+			{ headers: { Authorization: `Bearer ${await token()}` }, signal }
+		);
+		if (!res.ok || !res.body) throw new Error(`Drive download failed: ${res.status}.`);
+		await pipeline(Readable.fromWeb(res.body as never), createWriteStream(dest));
+	} catch (e) {
+		if (!signal.aborted) throw e;
+		throw new Error(`The Drive download took longer than ${DOWNLOAD_TIMEOUT_MS / 60_000} min.`, {
+			cause: e
+		});
+	}
 }
 
 /** Upload a rendered clip (or a cover image) into a Drive folder; returns its id and link. */

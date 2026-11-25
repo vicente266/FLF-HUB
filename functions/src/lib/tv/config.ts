@@ -10,6 +10,12 @@ export const CLIP_COLLECTION = 'tvClip';
 export const TRANSCRIPT_COLLECTION = 'tvTranscript';
 export const SKILL_COLLECTION = 'tvSkill';
 
+/**
+ * A job whose `updatedAt` is older than this was abandoned by a stopped worker (a live one bumps it
+ * every few minutes): the worker claims it again, and the Hub lets people retry or delete it.
+ */
+export const STALE_MS = { video: 2 * 3_600_000, clip: 3_600_000 } as const;
+
 export const VIDEO_STATUSES = ['queued', 'processing', 'review', 'failed'] as const;
 export type VideoStatus = (typeof VIDEO_STATUSES)[number];
 

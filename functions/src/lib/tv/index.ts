@@ -9,6 +9,7 @@ import {
 	DEFAULT_CLIPPING_SKILL,
 	SKILL_COLLECTION,
 	SKILL_IDS,
+	STALE_MS,
 	TRANSCRIPT_COLLECTION,
 	VIDEO_COLLECTION,
 	VIDEO_STATUSES,
@@ -19,6 +20,11 @@ import {
 export const videos = db.collection(VIDEO_COLLECTION);
 export const clips = db.collection(CLIP_COLLECTION);
 export const skills = db.collection(SKILL_COLLECTION);
+
+/** A job the worker holds ('processing' / 'rendering') and still updates: hands off. */
+const busy = (d: FirebaseFirestore.DocumentData | undefined, kind: keyof typeof STALE_MS) =>
+	d?.status === (kind === 'video' ? 'processing' : 'rendering') &&
+	Date.now() - (d.updatedAt?.toMillis?.() ?? Date.now()) < STALE_MS[kind];
 
 const who = (auth: any) => auth?.token?.name || auth?.token?.email || 'Someone';
 
@@ -145,63 +151,87 @@ export const actions = {
 		return { id: ref.id };
 	},
 
-	/** Back to the queue: transcribed again and new clips proposed (old suggestions are removed). */
+	/**
+	 * Back to the queue: transcribed again and new clips proposed (old suggestions are removed).
+	 * Refused while it is processing, unless the worker abandoned it (STALE_MS).
+	 */
 	'video.retry': async (p: any) => {
 		const id = str(p.id, 'id');
 		const ref = videos.doc(id);
-		const v = (await ref.get()).data();
-		if (!v) throw new HttpsError('not-found', 'Video not found.');
-		if (v.status === 'processing')
-			throw new HttpsError('failed-precondition', 'It is being processed now.');
-		const old = await clips.where('videoId', '==', id).where('status', '==', 'suggested').get();
-		const batch = db.batch();
-		old.forEach((c) => batch.delete(c.ref));
-		batch.update(ref, { status: 'queued', step: null, error: null, updatedAt: serverTimestamp() });
-		await batch.commit();
-		return { ok: true };
-	},
-
-	'video.delete': async (p: any) => {
-		const id = str(p.id, 'id');
-		const v = (await videos.doc(id).get()).data();
-		if (v?.status === 'processing')
-			throw new HttpsError('failed-precondition', 'It is being processed now.');
-		const all = await clips.where('videoId', '==', id).get();
-		const batch = db.batch();
-		all.forEach((c) => batch.delete(c.ref));
-		batch.delete(videos.doc(id));
-		batch.delete(db.collection(TRANSCRIPT_COLLECTION).doc(id));
-		await batch.commit();
-		return { ok: true };
-	},
-
-	/** Edit a clip. Editing a rendered clip sends it back to be rendered again. */
-	'clip.update': async (p: any, auth: any) => {
-		const ref = clips.doc(str(p.id, 'id'));
-		const clip = (await ref.get()).data();
-		if (!clip) throw new HttpsError('not-found', 'Clip not found.');
-		if (clip.status === 'rendering')
-			throw new HttpsError('failed-precondition', 'It is rendering now.');
-		const edits = await clipEdits(p, clip);
-		const visual = ['start', 'end', 'hook', 'focusX'].some((k) => k in edits);
-		await ref.update({
-			...edits,
-			...(visual && clip.status === 'rendered' ? { status: 'approved', renderUrl: null } : {}),
-			updatedBy: who(auth),
-			updatedAt: serverTimestamp()
+		await db.runTransaction(async (tx) => {
+			const [snap, old] = await Promise.all([
+				tx.get(ref),
+				tx.get(clips.where('videoId', '==', id).where('status', '==', 'suggested'))
+			]);
+			const v = snap.data();
+			if (!v) throw new HttpsError('not-found', 'Video not found.');
+			if (busy(v, 'video'))
+				throw new HttpsError('failed-precondition', 'It is being processed now.');
+			old.forEach((c) => tx.delete(c.ref));
+			tx.update(ref, { status: 'queued', step: null, error: null, updatedAt: serverTimestamp() });
 		});
 		return { ok: true };
 	},
 
-	/** approve (the worker renders it), reject, or back to suggested. */
+	/**
+	 * Refused while the Mac works on it or on one of its clips (in a transaction with its claims),
+	 * unless the worker abandoned that job (STALE_MS).
+	 */
+	'video.delete': async (p: any) => {
+		const id = str(p.id, 'id');
+		await db.runTransaction(async (tx) => {
+			const [v, all] = await Promise.all([
+				tx.get(videos.doc(id)),
+				tx.get(clips.where('videoId', '==', id))
+			]);
+			if (busy(v.data(), 'video'))
+				throw new HttpsError('failed-precondition', 'It is being processed now.');
+			if (all.docs.some((c) => busy(c.data(), 'clip'))) {
+				throw new HttpsError(
+					'failed-precondition',
+					'One of its clips is rendering now. Delete it once that is done.'
+				);
+			}
+			all.forEach((c) => tx.delete(c.ref));
+			tx.delete(videos.doc(id));
+			tx.delete(db.collection(TRANSCRIPT_COLLECTION).doc(id));
+		});
+		return { ok: true };
+	},
+
+	/**
+	 * Edit a clip. Editing a rendered clip sends it back to be rendered again. Refused while it
+	 * renders, unless the worker abandoned it (STALE_MS); the check and the write share a
+	 * transaction, so the worker can't claim the clip in between.
+	 */
+	'clip.update': async (p: any, auth: any) => {
+		const ref = clips.doc(str(p.id, 'id'));
+		await db.runTransaction(async (tx) => {
+			const clip = (await tx.get(ref)).data();
+			if (!clip) throw new HttpsError('not-found', 'Clip not found.');
+			if (busy(clip, 'clip')) throw new HttpsError('failed-precondition', 'It is rendering now.');
+			const edits = await clipEdits(p, clip);
+			const visual = ['start', 'end', 'hook', 'focusX'].some((k) => k in edits);
+			tx.update(ref, {
+				...edits,
+				...(visual && clip.status === 'rendered' ? { status: 'approved', renderUrl: null } : {}),
+				updatedBy: who(auth),
+				updatedAt: serverTimestamp()
+			});
+		});
+		return { ok: true };
+	},
+
+	/** approve (the worker renders it), reject, or back to suggested; same check as clip.update. */
 	'clip.status': async (p: any, auth: any) => {
 		const ref = clips.doc(str(p.id, 'id'));
-		const clip = (await ref.get()).data();
-		if (!clip) throw new HttpsError('not-found', 'Clip not found.');
 		const status = oneOf(p.status, ['approved', 'rejected', 'suggested'] as const, 'status');
-		if (clip.status === 'rendering')
-			throw new HttpsError('failed-precondition', 'It is rendering now.');
-		await ref.update({ status, error: null, updatedBy: who(auth), updatedAt: serverTimestamp() });
+		await db.runTransaction(async (tx) => {
+			const clip = (await tx.get(ref)).data();
+			if (!clip) throw new HttpsError('not-found', 'Clip not found.');
+			if (busy(clip, 'clip')) throw new HttpsError('failed-precondition', 'It is rendering now.');
+			tx.update(ref, { status, error: null, updatedBy: who(auth), updatedAt: serverTimestamp() });
+		});
 		return { ok: true };
 	},
 

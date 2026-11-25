@@ -1,8 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from './config.js';
-import { run } from './run.js';
+import { run, TIMEOUT } from './run.js';
 import { parseJson } from './clipping.js';
 import { assColor, cropFor } from './render.js';
 import type { Brand } from './types.js';
@@ -34,27 +34,36 @@ export function candidateTimes(
 	return unique.slice(0, max);
 }
 
-/** One small JPEG per candidate, for Claude to look at. */
-async function grabFrames(source: string, times: number[], dir: string): Promise<string[]> {
+/** One small JPEG per candidate, for Claude to look at; named per clip so two renders never share one. */
+async function grabFrames(
+	source: string,
+	times: number[],
+	dir: string,
+	id: string
+): Promise<string[]> {
 	const paths: string[] = [];
 	for (const [i, t] of times.entries()) {
-		const p = join(dir, `cand-${i}.jpg`);
-		await run(config.ffmpeg, [
-			'-y',
-			'-v',
-			'error',
-			'-ss',
-			t.toFixed(2),
-			'-i',
-			source,
-			'-frames:v',
-			'1',
-			'-vf',
-			'scale=640:-2',
-			'-q:v',
-			'4',
-			p
-		]);
+		const p = join(dir, `cand-${id}-${i}.jpg`);
+		await run(
+			config.ffmpeg,
+			[
+				'-y',
+				'-v',
+				'error',
+				'-ss',
+				t.toFixed(2),
+				'-i',
+				source,
+				'-frames:v',
+				'1',
+				'-vf',
+				'scale=640:-2',
+				'-q:v',
+				'4',
+				p
+			],
+			TIMEOUT.probe
+		);
 		paths.push(p);
 	}
 	return paths;
@@ -167,10 +176,11 @@ async function still(opts: {
 	videoTitle: string;
 	brand: Brand;
 	dir: string;
+	id: string;
 	out: string;
 }) {
 	const { kind, brand: b } = opts;
-	const ass = join(opts.dir, `${kind}.ass`);
+	const ass = join(opts.dir, `${kind}-${opts.id}.ass`);
 	writeFileSync(ass, coverAss(kind, opts.title, opts.videoTitle, b));
 	const navy = b.cardColor.replace('#', '0x');
 	let frame: string;
@@ -187,24 +197,28 @@ async function still(opts: {
 		logo = 'scale=96:96[lg];[f][lg]overlay=64:56';
 	}
 	const fonts = fpath(config.fontsDir);
-	await run(config.ffmpeg, [
-		'-y',
-		'-v',
-		'error',
-		'-ss',
-		opts.t.toFixed(2),
-		'-i',
-		opts.source,
-		'-i',
-		config.logo,
-		'-filter_complex',
-		`[0:v]${frame},${band},ass='${fpath(ass)}':fontsdir='${fonts}'[f];[1:v]${logo}`,
-		'-frames:v',
-		'1',
-		'-q:v',
-		'2',
-		opts.out
-	]);
+	await run(
+		config.ffmpeg,
+		[
+			'-y',
+			'-v',
+			'error',
+			'-ss',
+			opts.t.toFixed(2),
+			'-i',
+			opts.source,
+			'-i',
+			config.logo,
+			'-filter_complex',
+			`[0:v]${frame},${band},ass='${fpath(ass)}':fontsdir='${fonts}'[f];[1:v]${logo}`,
+			'-frames:v',
+			'1',
+			'-q:v',
+			'2',
+			opts.out
+		],
+		TIMEOUT.probe
+	);
 }
 
 /** Pick the best frame and draw the cover and the thumbnail. */
@@ -221,8 +235,9 @@ export async function makeCovers(opts: {
 	id: string;
 }) {
 	const times = candidateTimes(opts.clip, opts.laughs);
-	const frames = await grabFrames(opts.source, times, opts.dir);
+	const frames = await grabFrames(opts.source, times, opts.dir, opts.id);
 	const pick = await pickFrame(opts.brandSkill, frames, times);
+	for (const f of frames) rmSync(f, { force: true });
 	const t = times[pick.index];
 	const common = {
 		source: opts.source,
@@ -233,7 +248,8 @@ export async function makeCovers(opts: {
 		title: opts.clip.hook,
 		videoTitle: opts.videoTitle,
 		brand: opts.brand,
-		dir: opts.dir
+		dir: opts.dir,
+		id: opts.id
 	};
 	const cover = join(opts.dir, `cover-${opts.id}.jpg`);
 	const thumbnail = join(opts.dir, `thumb-${opts.id}.jpg`);

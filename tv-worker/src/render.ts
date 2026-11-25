@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { config } from './config.js';
-import { run } from './run.js';
+import { run, TIMEOUT } from './run.js';
 import type { Brand, Word } from './types.js';
 
 const W = 1080;
@@ -238,5 +238,5 @@ export async function renderClip(opts: {
 		'+faststart',
 		opts.out
 	);
-	await run(config.ffmpeg, args);
+	await run(config.ffmpeg, args, TIMEOUT.ffmpeg);
 }

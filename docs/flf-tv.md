@@ -39,9 +39,28 @@ rendering → rendered | rejected | failed`, cuts, links), `tvSkill/{clipping,br
 `core:tv.*` (on `coreAction`, see CLAUDE.md). The worker writes with the Admin SDK through the
 owner's Application Default Credentials.
 
+## When the Mac stops mid-job
+
+- A running job bumps `updatedAt` every 5 minutes. The worker's claim (one transaction) also takes
+  a video left `processing` for 2 h or a clip left `rendering` for 1 h, sets `recoveredAt` and
+  counts `attempts`; on the 3rd abandonment it marks the job `failed` (Retry / Approve again).
+  It looks for these every 10 minutes when the queue is empty (one read each).
+- Every command has a timeout and is killed after it: whisper 3 h, a render or an audio pass
+  30 min, probes, frames and covers 2 min; a Drive download is aborted after 1 h. An error in the
+  worker's loop (Firestore, network) is logged and retried after 60 s instead of stopping it.
+- A video can't be retried or deleted while it is processing or one of its clips is rendering,
+  nor a rendering clip edited, unless that job is past the same 2 h / 1 h limit (`STALE_MS` in
+  `functions/src/lib/tv/config.ts`, imported by the worker). Each check is in the same transaction
+  as its write. A job deleted anyway is logged and skipped by the worker.
+- Work folder: the source downloads to `source.part` and is renamed when complete. Temp files are
+  named per clip. Once no clip of a video is `suggested`, `approved` or `rendering`, its source and temp files
+  are removed (one read); finished renders stay, because without a Drive folder `localPath`
+  points at them, until the hourly sweep removes anything untouched for 7 days.
+
 ## Tested
 
-`tv-worker` self-test (29 checks: cutting at pauses, snapping, validation, subtitles, crop, covers)
+`tv-worker` self-test (35 checks: cutting at pauses, snapping, validation, subtitles, crop, covers,
+abandoned-job rules, command timeouts)
 and an end-to-end run on the Firestore emulator with a generated video whose audio has real
 silences: topics stored, both clips cut inside measured pauses, rendered 1080×1920 with captions,
 hook, logo and end card, cover and thumbnail made. Not tested here: real whisper.cpp, real Claude

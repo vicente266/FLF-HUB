@@ -8,7 +8,10 @@ const env = (k: string, d = '') => process.env[k] ?? d;
 /** Everything the worker reads from the environment (see tv-worker/README.md). */
 export const config = {
 	projectId: env('FLF_PROJECT_ID', 'flfhub'),
-	/** Where downloads, audio and renders go. Videos are deleted after each one is done. */
+	/**
+	 * Where downloads, audio and renders go. A video's source and temp files are removed once none
+	 * of its clips waits to render; anything untouched for 7 days goes too (index.ts, cleanWorkDir).
+	 */
 	workDir: env('TV_WORK_DIR', join(homedir(), 'FLF-TV-work')),
 	/** whisper.cpp's CLI and a model file (brew install whisper-cpp; see README). */
 	whisperCmd: env('TV_WHISPER_CMD', 'whisper-cli'),

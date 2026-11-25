@@ -47,14 +47,14 @@ Mac awake). Ctrl+C stops after the current job.
 
 ## Settings (environment variables)
 
-| Variable                              | Default                                            |                                                                 |
-| ------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------- |
-| `FLF_PROJECT_ID`                      | `flfhub`                                           | Firebase project                                                |
-| `TV_WORK_DIR`                         | `~/FLF-TV-work`                                    | Downloads and renders; folders untouched for 7 days are removed |
-| `TV_WHISPER_CMD` / `TV_WHISPER_MODEL` | `whisper-cli` / `~/models/ggml-large-v3-turbo.bin` |                                                                 |
-| `TV_WHISPER_LANGUAGE`                 | `auto`                                             | e.g. `es`, `en`                                                 |
-| `TV_CLAUDE_MODEL`                     | `claude-opus-5-5`                                  |                                                                 |
-| `TV_POLL_SECONDS`                     | `30`                                               |                                                                 |
+| Variable                              | Default                                            |                                                                                                                                                                               |
+| ------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FLF_PROJECT_ID`                      | `flfhub`                                           | Firebase project                                                                                                                                                              |
+| `TV_WORK_DIR`                         | `~/FLF-TV-work`                                    | Downloads and renders. A video's source and temp files go once none of its clips is suggested, approved or rendering; anything untouched for 7 days goes too (checked hourly) |
+| `TV_WHISPER_CMD` / `TV_WHISPER_MODEL` | `whisper-cli` / `~/models/ggml-large-v3-turbo.bin` |                                                                                                                                                                               |
+| `TV_WHISPER_LANGUAGE`                 | `auto`                                             | e.g. `es`, `en`                                                                                                                                                               |
+| `TV_CLAUDE_MODEL`                     | `claude-opus-5-5`                                  |                                                                                                                                                                               |
+| `TV_POLL_SECONDS`                     | `30`                                               |                                                                                                                                                                               |
 
 Test hooks (used by the emulator test, never in production): `TV_LOCAL_SOURCE`,
 `TV_FAKE_TRANSCRIPT`, `TV_FAKE_CLIPS`, `TV_FAKE_FRAME`, `TV_NO_UPLOAD=1`.

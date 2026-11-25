@@ -5,6 +5,8 @@ import { parseSilences, cutStart, cutEnd } from './silences.js';
 import { candidateTimes, coverAss } from './cover.js';
 import { buildAss, cropFor, assColor } from './render.js';
 import { toLines } from './transcribe.js';
+import { run } from './run.js';
+import { MAX_ATTEMPTS, STALE_MS, HEARTBEAT_MS, isRenderOutput, recoverDecision } from './jobs.js';
 import { DEFAULT_BRAND } from '../../functions/src/lib/tv/config.js';
 import type { Word } from './types.js';
 
@@ -146,5 +148,35 @@ ok(
 	coverAss('thumbnail', 'x', 'y', DEFAULT_BRAND).includes('PlayResX: 1280'),
 	'the thumbnail is 16:9'
 );
+
+// Abandoned jobs and the work folder.
+ok(
+	recoverDecision(undefined) === 'retry' && recoverDecision(MAX_ATTEMPTS - 1) === 'retry',
+	'an abandoned job is taken again while it has tries left'
+);
+ok(recoverDecision(MAX_ATTEMPTS) === 'fail', `after ${MAX_ATTEMPTS} tries it is marked failed`);
+ok(
+	HEARTBEAT_MS * 3 < Math.min(STALE_MS.video, STALE_MS.clip),
+	'a live job’s heartbeat is far inside the stale limits'
+);
+ok(
+	['clip-a1.mp4', 'cover-a1.jpg', 'thumb-a1.jpg'].every(isRenderOutput) &&
+		!['source', 'source.part', 'audio.wav', 'clip-a1.ass', 'cand-a1-0.jpg', 'cover-a1.ass'].some(
+			isRenderOutput
+		),
+	'only finished renders are kept when a video’s temp files are removed'
+);
+
+// Commands are killed after their timeout.
+const t0 = Date.now();
+const timedOut = await run('sleep', ['10'], 200).then(
+	() => '',
+	(e: Error) => e.message
+);
+ok(
+	timedOut.includes('was stopped') && Date.now() - t0 < 5000,
+	'a command past its timeout is killed'
+);
+ok((await run('echo', ['hi'], 5000)).trim() === 'hi', 'a quick command still returns its output');
 
 console.log(`\n${n} checks passed`);

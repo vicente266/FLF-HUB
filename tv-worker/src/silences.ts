@@ -1,5 +1,5 @@
 import { config } from './config.js';
-import { run } from './run.js';
+import { run, TIMEOUT } from './run.js';
 import type { CutKind, Silence, Word } from './types.js';
 
 /** Pauses shorter than this are breaths inside a sentence, not places to cut. */
@@ -11,17 +11,21 @@ export const MIN_PAUSE = 0.35;
  */
 export async function detectSilences(audio: string, noiseDb = -35): Promise<Silence[]> {
 	// silencedetect logs to stderr; run() only keeps the tail, so ask ffmpeg to print to stdout.
-	const out = await run(config.ffmpeg, [
-		'-hide_banner',
-		'-nostats',
-		'-i',
-		audio,
-		'-af',
-		`silencedetect=noise=${noiseDb}dB:d=${MIN_PAUSE},ametadata=mode=print:file=-`,
-		'-f',
-		'null',
-		'-'
-	]);
+	const out = await run(
+		config.ffmpeg,
+		[
+			'-hide_banner',
+			'-nostats',
+			'-i',
+			audio,
+			'-af',
+			`silencedetect=noise=${noiseDb}dB:d=${MIN_PAUSE},ametadata=mode=print:file=-`,
+			'-f',
+			'null',
+			'-'
+		],
+		TIMEOUT.ffmpeg
+	);
 	return parseSilences(out);
 }
 
