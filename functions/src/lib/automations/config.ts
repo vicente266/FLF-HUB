@@ -23,7 +23,7 @@ export const AUTOMATIONS: AutomationDef[] = [
 		id: 'stage-follow-up',
 		name: 'Follow-up task per stage',
 		description:
-			'When a contact enters a stage, its owner gets the follow-up task defined for that stage, due after the stage’s number of days.',
+			'When a contact is created in the Hub or enters a stage, the open follow-ups of its previous stage are closed and its owner (or, without one, whoever moved it) gets the follow-up defined for the new stage, due after the stage’s number of days.',
 		trigger: 'contact.stage',
 		uses: [],
 		defaultEnabled: true
@@ -32,7 +32,7 @@ export const AUTOMATIONS: AutomationDef[] = [
 		id: 'next-step-task',
 		name: 'Task per next step',
 		description:
-			'When someone sets a contact’s next step in the Hub, its owner gets a task: “Plan Interaction” → plan the next interaction (2 days), “Awaiting for Response” → follow up (7 days).',
+			'When someone sets a contact’s next step in the Hub, the previous next-step task is closed and its owner (or, without one, whoever set it) gets a task: “Plan Interaction” → plan the next interaction (2 days), “Awaiting for Response” → follow up (7 days).',
 		trigger: 'contact.nextStep',
 		uses: [],
 		defaultEnabled: true
@@ -50,7 +50,7 @@ export const AUTOMATIONS: AutomationDef[] = [
 		id: 'stale-contacts',
 		name: 'Flag stale contacts',
 		description:
-			'Every morning, open contacts with no activity for 14 days are marked "needs attention" and their owner gets a task.',
+			'Every morning, open contacts with no activity for 14 days are marked "needs attention" and get one check-in task for their owner (or whoever last moved them in the Hub; with neither, only the flag). A note, a move or a meeting clears the flag and closes the task.',
 		trigger: 'schedule',
 		schedule: 'Every day at 08:00 (Madrid)',
 		uses: ['slack'],

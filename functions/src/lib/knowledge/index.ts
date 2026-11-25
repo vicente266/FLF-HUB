@@ -35,7 +35,11 @@ export function isExpired(entry: { expiredAt?: string }, today = todayIso()): bo
 function toEntry(entry: Knowledge): string {
 	const label = entry.label?.trim().replace(/"/g, "'");
 	const expiredAt = entry.expiredAt?.trim();
-	const description = entry.description?.trim() ?? '';
+	// An entry's own text can't close its block or open another (or the knowledge frame).
+	const description = (entry.description?.trim() ?? '').replace(
+		/<(\/?)(entry|flf_knowledge)\b/gi,
+		'‹$1$2'
+	);
 	if (!description) return label ? `<entry>\n${label}\n</entry>` : '';
 	const attrs = [label && ` label="${label}"`, expiredAt && ` valid_until="${expiredAt}"`]
 		.filter(Boolean)
@@ -97,7 +101,11 @@ export const actions = {
 	/** Every entry, active and expired, oldest first. */
 	list: async () => {
 		const entries = await list();
-		return { entries, active: formatKnowledge(entries) };
+		const today = todayIso();
+		return {
+			entries: entries.map((e) => ({ ...e, expired: isExpired(e, today) })),
+			active: formatKnowledge(entries)
+		};
 	},
 
 	/** Create (no id) or update an entry; returns its id. */

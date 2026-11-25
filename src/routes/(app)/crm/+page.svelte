@@ -12,6 +12,7 @@
 	import { me } from '$lib/stores';
 	import { hasPermission, listen, setTitle, relative } from '$lib/utils';
 	import {
+		askReason,
 		contactSubtitle,
 		contactTitle,
 		crmConfig,
@@ -75,11 +76,16 @@
 		dragging = null;
 		const c = contacts.find((x) => x.id === id);
 		if (!id || !c || c.stage === stage || !canWrite) return;
+		const reason = askReason(
+			stages.find((s) => s.id === stage),
+			contactTitle(c)
+		);
+		if (reason === null) return;
 		const previous = c.stage;
 		c.stage = stage; // optimistic; the listener confirms
 		moveError = null;
 		try {
-			await callAction('crm:contact.stage', { id, stage });
+			await callAction('crm:contact.stage', { id, stage, reason });
 		} catch (e) {
 			// Nothing changed in Firestore, so the listener won't put it back.
 			c.stage = previous;

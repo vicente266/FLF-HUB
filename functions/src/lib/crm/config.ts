@@ -18,6 +18,8 @@ export interface Stage {
 	followUpDays?: number;
 	/** Title of that follow-up task. */
 	followUp?: string;
+	/** A losing final stage: moving a contact here asks why (kept on the contact and its timeline). */
+	askReason?: boolean;
 }
 
 export interface Pipeline {
@@ -85,7 +87,7 @@ export const PIPELINES: Record<ContactType, Pipeline> = {
 				followUp: 'Follow up on the teaser'
 			},
 			{ id: 'fellow', label: 'Fellows', final: true },
-			{ id: 'lost', label: 'Lost', final: true }
+			{ id: 'lost', label: 'Lost', final: true, askReason: true }
 		]
 	},
 	guru: {
@@ -102,7 +104,7 @@ export const PIPELINES: Record<ContactType, Pipeline> = {
 			},
 			{ id: 'onboarding', label: 'Onboarding', followUpDays: 7, followUp: 'Finish onboarding' },
 			{ id: 'active', label: 'Active', final: true },
-			{ id: 'declined', label: 'Declined', final: true }
+			{ id: 'declined', label: 'Declined', final: true, askReason: true }
 		]
 	},
 	investor: {
@@ -114,7 +116,7 @@ export const PIPELINES: Record<ContactType, Pipeline> = {
 			{ id: 'intro', label: 'Intro', followUpDays: 7, followUp: 'Follow up after the intro' },
 			{ id: 'engaged', label: 'Engaged', followUpDays: 14, followUp: 'Check in' },
 			{ id: 'roster', label: 'On roster', final: true },
-			{ id: 'declined', label: 'Declined', final: true }
+			{ id: 'declined', label: 'Declined', final: true, askReason: true }
 		]
 	},
 	partner: {
@@ -138,7 +140,7 @@ export const PIPELINES: Record<ContactType, Pipeline> = {
 			},
 			{ id: 'proposal', label: 'Proposal', followUpDays: 5, followUp: 'Follow up on the proposal' },
 			{ id: 'won', label: 'Partners', final: true },
-			{ id: 'lost', label: 'Lost', final: true }
+			{ id: 'lost', label: 'Lost', final: true, askReason: true }
 		]
 	}
 };

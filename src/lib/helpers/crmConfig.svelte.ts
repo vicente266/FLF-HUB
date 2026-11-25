@@ -28,6 +28,16 @@ export function contactSubtitle(c: { type: string; name: string; company?: strin
 	return c.company ? c.name : '';
 }
 
+/**
+ * The reason for moving a contact to a losing stage (Lost, Declined): asked here, before the move.
+ * '' for any other stage; null when the person cancels, so nothing moves.
+ */
+export function askReason(stage: { label: string; askReason?: boolean } | undefined, name: string) {
+	if (!stage?.askReason) return '';
+	const r = prompt(`Why is ${name} ${stage.label.toLowerCase()}? (optional, kept on the timeline)`);
+	return r === null ? null : r.trim().slice(0, 500);
+}
+
 export function stageLabel(c: CrmConfig | null, type: ContactType, stage: string): string {
 	return c?.pipelines[type]?.stages.find((s) => s.id === stage)?.label ?? stage;
 }

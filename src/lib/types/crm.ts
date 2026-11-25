@@ -9,6 +9,8 @@ export interface Stage {
 	final?: boolean;
 	followUpDays?: number;
 	followUp?: string;
+	/** A losing final stage: moving here asks why. */
+	askReason?: boolean;
 }
 
 export interface Pipeline {
@@ -61,6 +63,8 @@ export interface Contact {
 	/** Partners: kind of organisation and go-to-market strategy. */
 	segment?: string;
 	strategyId?: string;
+	/** Why it was lost or declined. */
+	lostReason?: string;
 	/** The portal sheet's view, when the contact was imported from it. */
 	portal?: {
 		from: string;
@@ -105,7 +109,11 @@ export interface Task {
 	ownerName?: string;
 	title: string;
 	dueAt: unknown;
-	assigneeUid: string;
+	/** Null when the contact had no owner and nobody moved it in the Hub (Tasks → Everyone). */
+	assigneeUid: string | null;
+	/** Which automation made it; closed automatically when the contact moves on. */
+	automationId?: string;
+	superseded?: boolean;
 	done: boolean;
 	source: 'automation' | 'manual' | 'claude' | 'portal';
 }

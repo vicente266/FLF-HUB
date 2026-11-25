@@ -21,6 +21,7 @@
 	} from '$lib/utils';
 	import {
 		contactSubtitle,
+		askReason,
 		contactTitle,
 		crmConfig,
 		typeStyle
@@ -278,7 +279,11 @@
 						{#each config.pipelines[c.type].stages as s (s.id)}
 							<button
 								disabled={!canWrite}
-								onclick={() => act('crm:contact.stage', { id, stage: s.id })}
+								onclick={() => {
+									if (s.id === c.stage) return;
+									const reason = askReason(s, contactTitle(c));
+									if (reason !== null) act('crm:contact.stage', { id, stage: s.id, reason });
+								}}
 								class="flex-1 rounded-md px-2 py-1.5 text-xs font-semibold {c.stage === s.id
 									? 'bg-primary-600 text-white'
 									: 'bg-canvas text-ink-soft hover:bg-primary-50 hover:text-primary-700'}"
@@ -311,9 +316,12 @@
 						{/if}
 					</div>
 					<p class="mt-2 text-xs text-ink-soft">
-						In this stage since {formatDate(c.stageChangedAt)}. Changes here stick: the portal sheet
-						only overrides them when that person is changed in the sheet.
+						In this stage since {formatDate(c.stageChangedAt)}. Your changes here are kept; the
+						portal sheet only overwrites them when someone edits this person's row in the sheet.
 					</p>
+					{#if c.lostReason}
+						<p class="mt-1 text-sm"><span class="font-semibold">Reason:</span> {c.lostReason}</p>
+					{/if}
 				</section>
 
 				{#if c.portal}

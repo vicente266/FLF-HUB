@@ -114,7 +114,7 @@
 								{/if}
 							</div>
 							<span class="text-xs text-ink-soft">
-								{SOURCE[t.source] ?? 'Manual'}
+								{SOURCE[t.source] ?? 'Manual'}{t.assigneeUid ? '' : ' · Unassigned'}
 							</span>
 							<span class="w-24 text-right text-xs font-semibold {g.tone}">
 								{formatDate(t.dueAt)}

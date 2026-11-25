@@ -52,34 +52,60 @@ export async function run(
 	}
 }
 
+/**
+ * Who an automation's task goes to: the owner, or else whoever last created, moved or set the next
+ * step of the contact in the Hub (so a contact without a Sherpa still gets its follow-ups). With
+ * neither, no task is made (a stale contact is still flagged "needs attention").
+ */
+const assigneeOf = (c: crm.Contact) => c.ownerUid || c.changedByUid || null;
+
+/** An automation's task. `automationId` lets a later change close it when it no longer applies. */
 async function addTask(
+	automationId: string,
 	contactId: string,
-	contactName: string,
-	uid: string,
+	c: crm.Contact,
 	title: string,
 	days: number
 ) {
 	await crm.tasks.add({
 		contactId,
-		contactName,
+		contactName: crm.displayName(c),
 		title,
 		dueAt: Timestamp.fromMillis(Date.now() + days * DAY),
-		assigneeUid: uid,
+		assigneeUid: assigneeOf(c),
 		done: false,
 		source: 'automation',
+		automationId,
 		createdAt: serverTimestamp()
 	});
 }
 
-/** `contact/{id}` moved to another stage. */
+/** Display name of whoever a task went to, for the run log. */
+const toWhom = (c: crm.Contact) =>
+	c.ownerUid ? c.ownerName : c.changedByUid ? c.changedByName : 'nobody (Tasks → Everyone)';
+
+/**
+ * `contact/{id}` entered a stage: created in the Hub (its first stage) or moved. Closes the
+ * follow-ups of the stage it left, then gives its owner (or whoever moved it) this stage's task.
+ */
 export async function onStageChanged(id: string, c: crm.Contact) {
+	// The current state: with two quick moves, the handler of the first must not act after the second.
+	const now = (await crm.contacts.doc(id).get()).data() as crm.Contact | undefined;
+	if (!now || now.stage !== c.stage) return;
+	// The old stage's tasks close whether or not the follow-up automation is on.
+	const closed = await crm.closeAutomationTasks(id, [
+		'stage-follow-up',
+		'meeting-next-stage',
+		'stale-contacts'
+	]);
 	await run(
 		'stage-follow-up',
 		async () => {
-			const stage = stageOf(c.type as ContactType, c.stage);
-			if (!stage?.followUp || !c.ownerUid) return null;
-			await addTask(id, crm.displayName(c), c.ownerUid, stage.followUp, stage.followUpDays ?? 3);
-			return `Task "${stage.followUp}" for ${c.ownerName}`;
+			const stage = stageOf(now.type as ContactType, now.stage);
+			if (!stage?.followUp || !assigneeOf(now))
+				return closed ? `Closed ${closed} task(s) of the previous stage` : null;
+			await addTask('stage-follow-up', id, now, stage.followUp, stage.followUpDays ?? 3);
+			return `Task "${stage.followUp}" for ${toWhom(now)}${closed ? `; closed ${closed} old` : ''}`;
 		},
 		id
 	);
@@ -87,13 +113,16 @@ export async function onStageChanged(id: string, c: crm.Contact) {
 
 /** `contact/{id}` got another next step (set in the Hub; sheet imports don't fire it). */
 export async function onNextStepChanged(id: string, c: crm.Contact) {
+	const now = (await crm.contacts.doc(id).get()).data() as crm.Contact | undefined;
+	if (!now || (now.nextStep ?? '') !== (c.nextStep ?? '')) return;
+	const closed = await crm.closeAutomationTasks(id, ['next-step-task']);
 	await run(
 		'next-step-task',
 		async () => {
-			const step = nextStepOf(c.nextStep);
-			if (!step || !c.ownerUid) return null;
-			await addTask(id, crm.displayName(c), c.ownerUid, step.task, step.days);
-			return `Task "${step.task}" for ${c.ownerName}`;
+			const step = nextStepOf(now.nextStep);
+			if (!step || !assigneeOf(now)) return closed ? `Closed ${closed} next-step task(s)` : null;
+			await addTask('next-step-task', id, now, step.task, step.days);
+			return `Task "${step.task}" for ${toWhom(now)}${closed ? `; closed ${closed} old` : ''}`;
 		},
 		id
 	);
@@ -125,13 +154,13 @@ export async function meetingSuggestions(meetings: NewMeeting[]) {
 				const doc = await crm.contacts.doc(m.contactId).get();
 				const c = doc.data() as crm.Contact | undefined;
 				// Fellows only: the calendar meetings are with the portal's CRM people.
-				if (!c || c.type !== 'fellow' || !c.ownerUid || !MEETING_STAGES.includes(c.stage))
+				if (!c || c.type !== 'fellow' || !MEETING_STAGES.includes(c.stage) || !assigneeOf(c))
 					return null;
 				const stage = stageOf(c.type, c.stage)?.label ?? c.stage;
 				const day = m.date!.toISOString().slice(0, 10);
 				const title = `Met on ${day} (“${m.title}”): move from ${stage} to the next stage?`;
-				await addTask(m.contactId, crm.displayName(c), c.ownerUid, title, 1);
-				return `Asked ${c.ownerName} about ${crm.displayName(c)}`;
+				await addTask('meeting-next-stage', m.contactId, c, title, 1);
+				return `Asked ${toWhom(c)} about ${crm.displayName(c)}`;
 			},
 			m.contactId
 		);
@@ -152,14 +181,14 @@ export async function staleContacts(slackUrl: string | undefined) {
 		for (const doc of snap.docs) {
 			const c = doc.data() as crm.Contact;
 			await doc.ref.update({ needsAttention: true });
-			if (c.ownerUid)
-				await addTask(
-					doc.id,
-					crm.displayName(c),
-					c.ownerUid,
-					`No activity for ${STALE_DAYS} days: check in`,
-					1
-				);
+			// The flag always (Home lists it); a task only for someone, and never a second one.
+			if (!assigneeOf(c)) continue;
+			const open = await crm.tasks
+				.where('contactId', '==', doc.id)
+				.where('done', '==', false)
+				.get();
+			if (open.docs.some((t) => t.data().automationId === 'stale-contacts')) continue;
+			await addTask('stale-contacts', doc.id, c, `No activity for ${STALE_DAYS} days: check in`, 1);
 		}
 		await connections.slack(
 			slackUrl,

@@ -557,7 +557,8 @@ export async function run() {
 		// Only when the sheet changed since the last sync: otherwise a Hub move stands.
 		if (cur.stage !== stage && cur.portal?.sheetStage !== stage) {
 			const label = (s: string) => stageOf(cur.type, s)?.label ?? s;
-			Object.assign(update, { stage, open: !final, stageChangedAt: now });
+			// The Hub's loss reason belongs to the stage it was given for.
+			Object.assign(update, { stage, open: !final, stageChangedAt: now, lostReason: '' });
 			await ref.collection('activity').add({
 				kind: 'stage',
 				text: `${label(cur.stage)} → ${label(stage)} (from the portal sheet)`,
@@ -667,6 +668,7 @@ export async function run() {
 	// A meeting is activity: move each contact's lastActivityAt forward to its latest meeting, so
 	// someone met yesterday is not flagged stale. One read per contact with meetings.
 	const latest = new Map<string, Date>();
+	const metContacts: string[] = [];
 	for (const e of p.events) {
 		if (!e.data.date || e.data.date.getTime() > Date.now()) continue;
 		for (const cid of e.data.contactIds) {
@@ -680,10 +682,15 @@ export async function run() {
 		if (!cur) continue;
 		const last = cur.lastActivityAt?.toMillis?.() ?? 0;
 		if (last >= date.getTime()) continue;
-		b.update(ref, { lastActivityAt: Timestamp.fromDate(date) });
+		// A meeting is activity: it also clears "needs attention".
+		b.update(ref, { lastActivityAt: Timestamp.fromDate(date), needsAttention: false });
 		if (++n >= 400) await flush();
+		metContacts.push(cid);
 	}
 	await flush();
+
+	// A new meeting answers "no activity": close the check-in tasks it made obsolete.
+	for (const cid of metContacts) await crm.closeAutomationTasks(cid, ['stale-contacts']);
 
 	const { meetingSuggestions } = await import('../automations/index.js');
 	await meetingSuggestions(newMeetings);

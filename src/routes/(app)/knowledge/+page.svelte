@@ -55,6 +55,20 @@
 		previewOpen = true;
 	}
 
+	// Exactly what Claude receives (the active entries, formatted by the backend).
+	let claudeOpen = $state(false);
+	let claudeText = $state<string | null>(null);
+	async function showClaude() {
+		claudeText = null;
+		claudeOpen = true;
+		try {
+			const r = await callAction<{ active: string }>('core:knowledge.list');
+			claudeText = r.active || '(nothing: no active entries)';
+		} catch (e) {
+			claudeText = errorText(e);
+		}
+	}
+
 	let deletingId = $state<string | null>(null);
 	async function remove(e: KnowledgeEntry) {
 		if (
@@ -145,6 +159,7 @@
 					email, a pitch or a reply; an entry with an expiry date stops being used the day after.
 				</p>
 			</div>
+			<button class="btn-ghost shrink-0" onclick={showClaude}>What Claude reads</button>
 			{#if canWrite}
 				<button class="btn-primary shrink-0" onclick={() => edit(null)}>
 					<Plus class="h-4 w-4" /> Add entry
@@ -197,5 +212,18 @@
 <Modal bind:open={previewOpen} title={preview?.label || 'Entry'} width="max-w-2xl">
 	{#if preview}
 		<p class="text-sm whitespace-pre-wrap">{preview.description}</p>
+	{/if}
+</Modal>
+
+<Modal bind:open={claudeOpen} title="What Claude reads" width="max-w-3xl">
+	<p class="mb-2 text-xs text-ink-soft">
+		The active entries as Claude receives them, inside a note telling it to follow them for facts
+		and wording. Expired entries are left out.
+	</p>
+	{#if claudeText === null}
+		<p class="text-sm text-ink-soft">Loading…</p>
+	{:else}
+		<pre
+			class="max-h-[60vh] overflow-auto rounded-lg bg-canvas px-3 py-2 text-xs whitespace-pre-wrap">{claudeText}</pre>
 	{/if}
 </Modal>

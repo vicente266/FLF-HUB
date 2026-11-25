@@ -268,7 +268,8 @@ export const crmContactWritten = onDocumentWritten('contact/{id}', async (event)
 	// owner assignment, Slack alert or follow-up task fires from them.
 	const synced = (x: crm.Contact | null) => (x as any)?.portal?.syncedAt?.toMillis?.();
 	if (synced(c) && synced(c) !== synced(before)) return;
-	if (!before) return;
+	// Created in the Hub: its first stage's follow-up (imports are skipped just above).
+	if (!before) return automations.onStageChanged(event.params.id, c);
 	if (before.stage !== c.stage) await automations.onStageChanged(event.params.id, c);
 	if ((before.nextStep ?? '') !== (c.nextStep ?? ''))
 		await automations.onNextStepChanged(event.params.id, c);

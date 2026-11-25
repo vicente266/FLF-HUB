@@ -43,6 +43,12 @@ export interface Contact {
 	segment?: string;
 	/** Partners only: the go-to-market strategy it belongs to, or empty. */
 	strategyId?: string;
+	/** Who last created it, moved its stage or set its next step in the Hub: gets the automation's
+	 * task when the contact has no owner. */
+	changedByUid?: string | null;
+	changedByName?: string | null;
+	/** Why it was lost or declined (asked when moving to such a stage). */
+	lostReason?: string;
 	/** What the portal sheet says, when the contact came from it (read-only copy). */
 	portal?: {
 		from: string;
@@ -141,6 +147,24 @@ export async function logActivity(
 	});
 	batch.update(ref, { lastActivityAt: serverTimestamp(), needsAttention: false });
 	await batch.commit();
+	// Activity answers "no activity for N days": its check-in task is done.
+	await closeAutomationTasks(contactId, ['stale-contacts']);
+}
+
+/**
+ * Close a contact's open tasks made by these automations (they belonged to a stage, next step or
+ * stale flag that no longer applies). Kept as done, marked superseded; manual, Claude and portal
+ * tasks have no `automationId` and are never touched. One query. Returns how many.
+ */
+export async function closeAutomationTasks(contactId: string, automationIds: string[]) {
+	const snap = await tasks.where('contactId', '==', contactId).where('done', '==', false).get();
+	const open = snap.docs.filter((d) => automationIds.includes(d.data().automationId));
+	if (!open.length) return 0;
+	const batch = db.batch();
+	for (const d of open)
+		batch.update(d.ref, { done: true, superseded: true, doneAt: serverTimestamp() });
+	await batch.commit();
+	return open.length;
 }
 
 export const strategies = db.collection(STRATEGY_COLLECTION);
@@ -231,7 +255,9 @@ export async function create(p: any, by: string, uid: string): Promise<string> {
 		lastActivityAt: serverTimestamp(),
 		createdAt: serverTimestamp(),
 		updatedAt: serverTimestamp(),
-		createdBy: uid
+		createdBy: uid,
+		changedByUid: uid,
+		changedByName: by
 	});
 	await ref.collection('activity').add({
 		kind: 'created',
@@ -293,16 +319,26 @@ export const actions = {
 		if (!stage) throw new HttpsError('invalid-argument', 'Invalid stage.');
 		if (stage.id === c.stage) return { ok: true };
 		const from = stageOf(c.type, c.stage)?.label ?? c.stage;
+		const reason = str(p.reason, 'reason', false);
+		if (reason.length > 500)
+			throw new HttpsError('invalid-argument', 'Keep the reason under 500 characters.');
 		await doc.ref.update({
 			stage: stage.id,
 			open: !stage.final,
 			stageChangedAt: serverTimestamp(),
-			updatedAt: serverTimestamp()
+			updatedAt: serverTimestamp(),
+			changedByUid: auth?.uid ?? null,
+			changedByName: who(auth),
+			// The reason belongs to a losing stage; leaving it clears it.
+			lostReason: stage.askReason ? reason : ''
 		});
-		await logActivity(id, 'stage', `${from} → ${stage.label}`, who(auth), {
-			from: c.stage,
-			to: stage.id
-		});
+		await logActivity(
+			id,
+			'stage',
+			`${from} → ${stage.label}${stage.askReason && reason ? `: ${reason}` : ''}`,
+			who(auth),
+			{ from: c.stage, to: stage.id }
+		);
 		return { ok: true };
 	},
 
@@ -314,7 +350,12 @@ export const actions = {
 		const doc = await contacts.doc(id).get();
 		if (!doc.exists) throw new HttpsError('not-found', 'Contact not found.');
 		if (((doc.data() as Contact).nextStep ?? '') === value) return { ok: true };
-		await doc.ref.update({ nextStep: value, updatedAt: serverTimestamp() });
+		await doc.ref.update({
+			nextStep: value,
+			updatedAt: serverTimestamp(),
+			changedByUid: auth?.uid ?? null,
+			changedByName: who(auth)
+		});
 		await logActivity(id, 'updated', `Next step: ${step?.label ?? 'none'}`, who(auth));
 		return { ok: true };
 	},
@@ -434,7 +475,12 @@ export const actions = {
 		const t = await ref.get();
 		if (!t.exists) throw new HttpsError('not-found', 'Task not found.');
 		const done = p.done !== false;
-		await ref.update({ done, doneAt: done ? serverTimestamp() : null });
+		await ref.update({
+			done,
+			doneAt: done ? serverTimestamp() : null,
+			// Reopened by hand: no longer "closed because the contact moved on".
+			...(done ? {} : { superseded: false })
+		});
 		// Tasks imported from the portal sheet belong to no contact.
 		if (done && t.data()?.contactId) {
 			await logActivity(t.data()?.contactId, 'note', `Task done: ${t.data()?.title}`, who(auth));

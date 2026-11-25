@@ -38,3 +38,18 @@ clear one). The screen sends every field; Claude's `flf_update_contact` sends on
 Strategy and Knowledge edits work the same way. Reads this adds: one read of the contact per update
 (plus one of the strategy when it changes), one read of the strategy or entry per edit, and a
 strategy delete reads its linked Partners in pages of 400.
+
+## Automation tasks (all contact types)
+
+- A task goes to the contact's **owner**, or, without one, to **whoever last created it, moved its
+  stage or set its next step in the Hub** (`changedByUid`). With neither, no task is made; a stale
+  contact is still flagged "needs attention".
+- Each automation task stores its `automationId`. Entering a stage closes the open tasks of the
+  previous stage (follow-up, meeting suggestion, stale check-in); a new next step closes the previous
+  next-step task; a note or a meeting closes the stale check-in. Closed ones stay as done, marked
+  `superseded`. Manual, Claude and portal tasks are never closed this way.
+- Each handler re-reads the contact and does nothing if it already moved on (two quick moves).
+- Moving to a losing stage (Lost, Declined) asks for the reason: stored as `lostReason`, shown on the
+  contact and its timeline, cleared when it leaves that stage.
+- Reads this adds: one query of the contact's open tasks per Hub create, stage move, next-step
+  change, note and meeting; one read of the contact per stage or next-step change.

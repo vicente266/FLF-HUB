@@ -34,7 +34,9 @@ Base and Intro Request are not imported yet.
   from that, i.e. when someone changed that person in the sheet. A move made in the Hub stands
   until then. The sheet's Status column (Plan Interaction, Awaiting for Response) is the next step.
 - New meetings from the last 14 days with a Target, Aware or Teaser contact give the owner a task
-  "move to the next stage?" (automation `meeting-next-stage`); nobody is moved automatically.
+  "move to the next stage?" (automation `meeting-next-stage`) for its owner, or whoever last moved
+  it in the Hub; nobody is moved automatically. A meeting also closes the contact's open "check in"
+  task and clears "needs attention". A stage the sheet changes clears the Hub's loss reason.
 - Sync writes set `portal.syncedAt`; `crmContactWritten` ignores them, so imports fire no
   follow-up or next-step task.
 - **Health:** the FLF Portal sheet check reads every tab and reports a missing column (someone
