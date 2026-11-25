@@ -54,7 +54,8 @@
 		return () => unsubs.forEach((u) => u());
 	});
 
-	const overdue = (t: Task) => (toDate(t.dueAt)?.getTime() ?? 0) < Date.now();
+	// A task with no due date is never overdue.
+	const overdue = (t: Task) => (toDate(t.dueAt)?.getTime() ?? Infinity) < Date.now();
 
 	const HEALTH_TEXT = {
 		ok: 'All systems working',
@@ -135,7 +136,9 @@
 					<h3 class="font-bold">Needs attention</h3>
 				</div>
 				{#if attention.length === 0}
-					<p class="px-4 py-6 text-sm text-ink-soft">Every contact is moving.</p>
+					<p class="px-4 py-6 text-sm text-ink-soft">
+						No contact has gone 14 days without activity.
+					</p>
 				{:else}
 					<ul class="divide-y divide-line/40">
 						{#each attention as c (c.id)}

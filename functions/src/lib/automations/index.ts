@@ -40,12 +40,15 @@ export async function run(
 		const message = err instanceof Error ? err.message : String(err);
 		logger.error(`${id} failed`, err);
 		await Promise.all([
-			collection
-				.doc(id)
-				.set(
-					{ lastRunAt: serverTimestamp(), lastError: message, errors: increment(1) },
-					{ merge: true }
-				),
+			collection.doc(id).set(
+				{
+					lastRunAt: serverTimestamp(),
+					lastError: message,
+					runs: increment(1),
+					errors: increment(1)
+				},
+				{ merge: true }
+			),
 			runs.add({ automationId: id, contactId, result: message, ok: false, at: serverTimestamp() })
 		]);
 	}
@@ -182,7 +185,8 @@ export async function staleContacts() {
 			.where('lastActivityAt', '<', cutoff)
 			.limit(200)
 			.get();
-		if (snap.empty) return null;
+		// Daily, so a quiet day is still recorded: it shows the job ran.
+		if (snap.empty) return `No contact without activity for ${STALE_DAYS} days`;
 		for (const doc of snap.docs) {
 			const c = doc.data() as crm.Contact;
 			await doc.ref.update({ needsAttention: true });
@@ -212,7 +216,8 @@ export async function portalSync() {
 	await run('portal-sync', async () => {
 		const portal = await import('../portal/index.js');
 		const r = await portal.run();
-		return `${r.contacts} contacts (${r.created} new, ${r.moved} moved), ${r.tasks} tasks`;
+		const skipped = r.skipped.length ? `; skipped: ${r.skipped.join('; ')}` : '';
+		return `${r.contacts} contacts (${r.created} new, ${r.moved} moved), ${r.tasks} tasks${skipped}`;
 	});
 }
 

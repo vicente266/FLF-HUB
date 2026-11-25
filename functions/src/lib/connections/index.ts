@@ -278,9 +278,23 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 						detail: 'Not set up yet: a developer needs to finish setup.'
 					};
 				}
+				// Working means the server answers from outside and someone has connected Claude.
+				const meta = await get(
+					`${new URL(CONNECTOR_URL).origin}/.well-known/oauth-protected-resource`
+				);
+				if (!meta.ok)
+					return {
+						status: 'error',
+						detail: `The connector answered ${meta.status} · ${CONNECTOR_URL}`
+					};
 				const n = (
 					await db.collection(CONNECTION_COLLECTION).where('endsAt', '>', new Date()).count().get()
 				).data().count;
+				if (!n)
+					return {
+						status: 'not_configured',
+						detail: `Ready, but nobody has connected Claude yet (Claude page) · ${CONNECTOR_URL}`
+					};
 				return {
 					status: 'ok',
 					detail: `${n} active connection${n === 1 ? '' : 's'} · ${CONNECTOR_URL}`

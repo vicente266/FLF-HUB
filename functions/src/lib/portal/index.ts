@@ -35,7 +35,11 @@ export interface Tab {
 	truncated?: boolean;
 }
 
-const norm = (s: unknown) => String(s ?? '').trim();
+/** A cell's text; a spreadsheet error (`#DIV/0!`, `#N/A`, `#REF!`…) reads as empty. */
+const norm = (s: unknown) => {
+	const v = String(s ?? '').trim();
+	return /^#(DIV\/0!|N\/A|VALUE!|REF!|NAME\?|NUM!|NULL!|ERROR!)$/i.test(v) ? '' : v;
+};
 const lower = (s: unknown) => norm(s).toLowerCase();
 const hash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 24);
 
@@ -145,7 +149,10 @@ export interface CalendarEvent {
  * The plan, from the tabs. Pure: no reads or writes, so it is what the dry run shows and what the
  * tests exercise. Precedence for a person: CRM tab (stage) > Profiles (a Fellow) > Applications.
  */
-export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: string }[]): Plan {
+export function plan(
+	tabs: Record<TabKey, Tab>,
+	team: { uid: string; name: string; email?: string }[]
+): Plan {
 	const p: Plan = {
 		contacts: [],
 		tasks: [],
@@ -176,21 +183,34 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 			prev.from = `${prev.from}+${from}`;
 		}
 	};
+	// The sheet names a Sherpa or task owner by Username ("Aleks"), Name or first name; a Profiles
+	// row of the team (Admin, Sherpa) links those to an email, and the email to a Hub user.
+	const teamRows = tabs.profiles.missing.length
+		? []
+		: tabs.profiles.rows.filter((r) => ['admin', 'sherpa'].includes(lower(r['Role'])));
 	const ownerOf = (name: string) => {
 		const n = lower(name);
 		if (!n) return null;
-		return team.find((u) => lower(u.name) === n || lower(u.name).split(' ')[0] === n) ?? null;
+		const byName = (u: { name: string }) =>
+			lower(u.name) === n || lower(u.name).split(' ')[0] === n;
+		const direct = team.find(byName);
+		if (direct) return direct;
+		const row = teamRows.find(
+			(r) =>
+				lower(r['Username']) === n || lower(r['Name']) === n || lower(r['Name']).split(' ')[0] === n
+		);
+		if (!row) return null;
+		const emails = emailsOf(row['Email']);
+		return (
+			team.find((u) => u.email && emails.includes(lower(u.email))) ??
+			team.find((u) => lower(u.name) === lower(row['Name'])) ??
+			null
+		);
 	};
 
 	// The team (Profiles role Admin or Sherpa) are users of the Hub, not contacts: their CRM rows,
 	// applications, check-ins and reports stay out of the Fellow data.
-	const teamEmails = new Set(
-		tabs.profiles.missing.length
-			? []
-			: tabs.profiles.rows
-					.filter((r) => ['admin', 'sherpa'].includes(lower(r['Role'])))
-					.flatMap((r) => emailsOf(r['Email']))
-	);
+	const teamEmails = new Set(teamRows.flatMap((r) => emailsOf(r['Email'])));
 	const isTeam = (cell: string) => emailsOf(cell).some((e) => teamEmails.has(e));
 
 	if (!tabs.crm.missing.length) {
@@ -217,7 +237,8 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 					nextStep: r['Status'],
 					scoring: r['Scoring'],
 					reasonLost: r['Reason Lost'],
-					sheetNotes: r['Notes']
+					sheetNotes: r['Notes'],
+					lastMeeting: parseDate(r['Last Meeting (N8N)'])
 				},
 				'crm'
 			);
@@ -240,7 +261,8 @@ export function plan(tabs: Record<TabKey, Tab>, team: { uid: string; name: strin
 					linkedin: r['LinkedIn'],
 					stage: 'fellow',
 					cohort: r['Cohort'],
-					pledgeSigned: yes(r['Pledge Signed']),
+					// The column holds "TRUE" or the signing date.
+					pledgeSigned: yes(r['Pledge Signed']) || !!parseDate(r['Pledge Signed']),
 					pledgeDate: parseDate(r['Pledge Date']),
 					companyUrl: r['Company URL'],
 					location: r['Location'],
@@ -459,7 +481,11 @@ export function summary(p: Plan) {
 
 async function teamList() {
 	const snap = await db.collection('user').where('role', 'in', ['user', 'admin']).get();
-	return snap.docs.map((d) => ({ uid: d.id, name: String(d.data().name || d.data().email) }));
+	return snap.docs.map((d) => ({
+		uid: d.id,
+		name: String(d.data().name || d.data().email),
+		email: String(d.data().email ?? '')
+	}));
 }
 
 /** Read the sheet and compute the plan; writes nothing. */
@@ -529,6 +555,24 @@ export async function run() {
 			(d.data().contactIds ?? []) as string[]
 		])
 	);
+	// The sheet's own dates per contact: the first and the latest time we know of them (applied,
+	// pledged, met). Imports used to stamp the import time instead, which made every contact "new"
+	// and none stale.
+	const firstSeen = new Map<string, Date>();
+	const lastSeen = new Map<string, Date>();
+	const seen = (id: string, d: unknown) => {
+		if (!(d instanceof Date) || d.getTime() > Date.now()) return;
+		const f = firstSeen.get(id);
+		if (!f || d < f) firstSeen.set(id, d);
+		const l = lastSeen.get(id);
+		if (!l || d > l) lastSeen.set(id, d);
+	};
+	for (const c of p.contacts)
+		for (const k of ['appliedAt', 'pledgeDate', 'lastMeeting', 'lastInteraction'])
+			seen(c.id, c.data[k]);
+	for (const e of p.events) for (const cid of e.data.contactIds) seen(cid, e.data.date);
+	const ts = (d: Date | undefined) => (d ? Timestamp.fromDate(d) : null);
+
 	for (const c of p.contacts) {
 		const ref = crm.contacts.doc(c.id);
 		let doc = await ref.get();
@@ -581,8 +625,9 @@ export async function run() {
 				needsAttention: false,
 				portal,
 				stageChangedAt: now,
-				lastActivityAt: now,
-				createdAt: d.appliedAt ?? now,
+				lastActivityAt: ts(lastSeen.get(c.id)) ?? now,
+				createdAt: ts(firstSeen.get(c.id)) ?? now,
+				sheetDates: true,
 				updatedAt: now,
 				createdBy: 'portal-sync'
 			});
@@ -606,6 +651,22 @@ export async function run() {
 		};
 		if (!cur.ownerUid && d.ownerUid)
 			Object.assign(update, { ownerUid: d.ownerUid, ownerName: d.ownerName });
+		// Once per contact imported before the sheet's dates were used: its real creation date, and
+		// its last activity from the sheet unless the Hub has a later one (one read, once).
+		if (cur.createdBy === 'portal-sync' && !(cur as { sheetDates?: boolean }).sheetDates) {
+			const hub = await ref.collection('activity').orderBy('at', 'desc').limit(20).get();
+			const hubLast = hub.docs.find((a) => a.data().via !== 'portal')?.data().at as
+				FirebaseFirestore.Timestamp | undefined;
+			const sheetLast = ts(lastSeen.get(c.id));
+			const last = [hubLast, sheetLast]
+				.filter((x): x is FirebaseFirestore.Timestamp => !!x)
+				.sort((a, b) => b.toMillis() - a.toMillis())[0];
+			Object.assign(update, {
+				sheetDates: true,
+				...(firstSeen.has(c.id) ? { createdAt: ts(firstSeen.get(c.id)) } : {}),
+				...(last ? { lastActivityAt: last } : {})
+			});
+		}
 		// Only when the sheet changed since the last sync: otherwise a Hub move stands.
 		if (cur.stage !== stage && cur.portal?.sheetStage !== stage) {
 			const label = (s: string) => stageOf(cur.type, s)?.label ?? s;
@@ -640,6 +701,7 @@ export async function run() {
 			});
 		}
 		await ref.update(update);
+		if (update.ownerUid) await crm.handOverTasks(c.id, update.ownerUid as string);
 	}
 
 	const batch = () => db.batch();
@@ -737,15 +799,9 @@ export async function run() {
 
 	// A meeting is activity: move each contact's lastActivityAt forward to its latest meeting, so
 	// someone met yesterday is not flagged stale. One read per contact with meetings.
-	const latest = new Map<string, Date>();
+	// The sheet's "Last Meeting" and "Last Interaction" count too.
+	const latest = lastSeen;
 	const metContacts: string[] = [];
-	for (const e of p.events) {
-		if (!e.data.date || e.data.date.getTime() > Date.now()) continue;
-		for (const cid of e.data.contactIds) {
-			const prev = latest.get(cid);
-			if (!prev || prev < e.data.date) latest.set(cid, e.data.date);
-		}
-	}
 	for (const [cid, date] of latest) {
 		const ref = crm.contacts.doc(cid);
 		const cur = (await ref.get()).data();
@@ -781,7 +837,8 @@ export async function run() {
 				moved,
 				contacts: p.contacts.length,
 				tasks: p.tasks.length,
-				events: p.events.length
+				events: p.events.length,
+				skipped: p.skipped
 			}
 		},
 		{ merge: true }

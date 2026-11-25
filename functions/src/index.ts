@@ -181,7 +181,7 @@ export const crmAction = onCall(
 		'contact.update': { ...crmWrite, handler: crm.actions['contact.update'] },
 		/** Move a contact to another stage of its pipeline. */
 		'contact.stage': { ...crmWrite, handler: crm.actions['contact.stage'] },
-		/** Set a contact's next step (Plan Interaction, Awaiting for Response), or none. */
+		/** Set a contact's next step (Plan Interaction, Awaiting response), or none. */
 		'contact.nextStep': { ...crmWrite, handler: crm.actions['contact.nextStep'] },
 		/** Give a contact an owner, or none. */
 		'contact.assign': { ...crmWrite, handler: crm.actions['contact.assign'] },

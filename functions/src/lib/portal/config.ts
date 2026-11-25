@@ -19,7 +19,17 @@ export const EVENT_PARTICIPANTS = 19;
 export const TABS = {
 	crm: {
 		name: 'CRM ',
-		columns: ['Name', 'Email', 'Company Name', 'Status', 'Stage', 'Scoring', 'Notes', 'Reason Lost']
+		columns: [
+			'Name',
+			'Email',
+			'Company Name',
+			'Last Meeting (N8N)',
+			'Status',
+			'Stage',
+			'Scoring',
+			'Notes',
+			'Reason Lost'
+		]
 	},
 	applications: {
 		name: 'Applications',
@@ -31,6 +41,7 @@ export const TABS = {
 		columns: [
 			'Email',
 			'Name',
+			'Username',
 			'Role',
 			'Cohort',
 			'Pledge Signed',

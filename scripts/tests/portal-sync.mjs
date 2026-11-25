@@ -98,6 +98,21 @@ function sheet({ annInEvent = true, renameProfilesColumn = false } = {}) {
 				'Current Income': '65000',
 				'Company Name': 'Fellowco',
 				'Sherpa Name': 'Vicente'
+			}),
+			row(PROFILES, {
+				Email: 'boris@flf.test',
+				Name: 'Boris Sherpa',
+				Username: 'Bo',
+				Role: 'Sherpa'
+			}),
+			row(PROFILES, {
+				Email: 'bea@fellow.io',
+				Name: 'Bea Fellow',
+				Role: 'Fellow',
+				'Pledge Signed': '10/06/2026',
+				'Pledge Date': '10/06/2026',
+				Growth: '#DIV/0!',
+				'Sherpa Name': 'Bo'
 			})
 		],
 		'CRM ': [
@@ -114,6 +129,7 @@ function sheet({ annInEvent = true, renameProfilesColumn = false } = {}) {
 				'Reason Lost'
 			],
 			['Ana Fellow', 'ana.fellow@test.io', 'Fellowco', '', '', 'Fellows', '', '9', '', ''],
+			['Bea Fellow', 'bea@fellow.io', '', '2026-09-01', '', 'Fellows', '', '', '', ''],
 			[
 				'Ann Aware',
 				'ann@aware.io',
@@ -271,6 +287,9 @@ const fresh = portal.contactIdOf('ted@teaser.io, ted.alt@teaser.io', 'Ted Teaser
 await db
 	.doc('user/u1')
 	.set({ email: 'vicente@flf.test', name: 'Vicente', role: 'admin', groups: [] });
+await db
+	.doc('user/u2')
+	.set({ email: 'boris@flf.test', name: 'Boris Kowalski', role: 'user', groups: [] });
 await db.doc(`contact/${legacy}`).set({
 	type: 'fellow',
 	name: 'Ted Teaser',
@@ -326,6 +345,20 @@ check(
 const everything = JSON.stringify((await db.collection('contact').get()).docs.map((d) => d.data()));
 check(!/SECRET|PasswordHash|Reset/.test(everything), 'no password hash or reset token is imported');
 check(first.created >= 3, 'new people are created');
+const bea = (
+	await db.doc(`contact/${portal.contactIdOf('bea@fellow.io', 'Bea Fellow')}`).get()
+).data();
+check(bea.ownerUid === 'u2', 'a Sherpa named by their portal Username becomes the owner');
+check(bea.portal.pledgeSigned === true, 'a date in Pledge Signed counts as signed');
+check(
+	bea.createdAt.toDate().toISOString().startsWith('2026-06-10') &&
+		bea.lastActivityAt.toDate().toISOString().startsWith('2026-09-01'),
+	'created and last activity come from the sheet’s dates, not the import time'
+);
+const beaMoney = (
+	await db.doc(`fellowFinance/${portal.contactIdOf('bea@fellow.io', 'Bea Fellow')}`).get()
+).data();
+check(beaMoney.growth === '', 'a spreadsheet error (#DIV/0!) is read as empty');
 
 console.log('Second sync, same sheet');
 const second = await sync('second');

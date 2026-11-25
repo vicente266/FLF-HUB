@@ -167,6 +167,22 @@ export async function closeAutomationTasks(contactId: string, automationIds: str
 	return open.length;
 }
 
+/**
+ * A contact got a new owner: its open automation tasks move to them (they went to whoever moved
+ * the contact only because it had no owner). Manual, Claude and portal tasks keep their assignee.
+ * One query. Returns how many moved.
+ */
+export async function handOverTasks(contactId: string, ownerUid: string | null) {
+	if (!ownerUid) return 0;
+	const snap = await tasks.where('contactId', '==', contactId).where('done', '==', false).get();
+	const mine = snap.docs.filter((d) => d.data().automationId && d.data().assigneeUid !== ownerUid);
+	if (!mine.length) return 0;
+	const batch = db.batch();
+	for (const d of mine) batch.update(d.ref, { assigneeUid: ownerUid });
+	await batch.commit();
+	return mine.length;
+}
+
 export const strategies = db.collection(STRATEGY_COLLECTION);
 
 /**
@@ -370,6 +386,7 @@ export const actions = {
 			ownerName = u.data()?.name || u.data()?.email;
 		}
 		await contacts.doc(id).update({ ownerUid, ownerName, updatedAt: serverTimestamp() });
+		await handOverTasks(id, ownerUid);
 		await logActivity(
 			id,
 			'assigned',

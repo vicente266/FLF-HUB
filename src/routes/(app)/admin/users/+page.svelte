@@ -52,7 +52,7 @@
 <div class="mx-auto max-w-6xl space-y-3">
 	<p class="text-sm text-ink-soft">
 		People appear here after their first sign-in. <strong>Guests</strong> cannot use the Hub until you
-		make them users. Sherpas receive new contacts from the "Assign a Sherpa" automation.
+		make them users. A Fellow's Sherpa in the portal sheet becomes their owner here.
 	</p>
 	<FormError message={error} />
 	<div class="overflow-hidden card">

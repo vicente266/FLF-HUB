@@ -50,7 +50,7 @@ export const CONNECTORS: Connector[] = [
 		availability: 'live',
 		description:
 			'The portal’s backend Google Sheet (Profiles, Applications, CRM, Tasks, Perma, Wealth). The Hub only reads it, every night and when you press Sync now; the portal and n8n keep writing to it. Test connection checks that no columns are missing.',
-		feeds: ['CRM', 'Tasks', 'Reports', 'Wellbeing'],
+		feeds: ['CRM', 'Tasks', 'Reports', 'Contact page (Wellbeing, Finances)'],
 		secrets: [],
 		settings: [
 			{

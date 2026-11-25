@@ -747,7 +747,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			title: 'Set next step',
 			description:
 				'Set a contact’s next step: "plan-interaction" (Plan Interaction) or "awaiting-response" ' +
-				'(Awaiting for Response), or "" for none. Its owner gets the matching task.',
+				'(Awaiting response), or "" for none. Its owner gets the matching task.',
 			inputSchema: z.object({
 				contact_id: ID,
 				next_step: z.enum(['', ...NEXT_STEPS.map((s) => s.id)] as [string, ...string[]])

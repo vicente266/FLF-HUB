@@ -35,8 +35,9 @@ export interface Pipeline {
  */
 export interface NextStep {
 	id: string;
-	/** As written in the sheet's Status column. */
 	label: string;
+	/** As written in the sheet's Status column, when it differs from the label. */
+	sheet?: string;
 	task: string;
 	days: number;
 }
@@ -45,7 +46,8 @@ export const NEXT_STEPS: NextStep[] = [
 	{ id: 'plan-interaction', label: 'Plan Interaction', task: 'Plan the next interaction', days: 2 },
 	{
 		id: 'awaiting-response',
-		label: 'Awaiting for Response',
+		label: 'Awaiting response',
+		sheet: 'Awaiting for Response',
 		task: 'Still no answer? Follow up',
 		days: 7
 	}
@@ -55,7 +57,9 @@ export const nextStepOf = (id: string | null | undefined) => NEXT_STEPS.find((s)
 
 /** The sheet's Status text → next-step id ('' when blank or unknown). */
 export const nextStepFromSheet = (text: string) =>
-	NEXT_STEPS.find((s) => s.label.toLowerCase() === text.trim().toLowerCase())?.id ?? '';
+	NEXT_STEPS.find((s) =>
+		[s.label, s.sheet ?? ''].some((x) => x.toLowerCase() === text.trim().toLowerCase())
+	)?.id ?? '';
 
 /** Stages a meeting can move forward: after one, the owner is asked whether to move the contact. */
 export const MEETING_STAGES = ['target', 'aware', 'teaser'];
@@ -65,7 +69,7 @@ export const PIPELINES: Record<ContactType, Pipeline> = {
 		label: 'Fellow',
 		plural: 'Fellows',
 		description:
-			'Founders, from application or target to Fellow. The stages of the portal’s CRM sheet (Targets, FOF – They are Aware, FOF – Teaser Received, Fellows, Lost).',
+			'Founders, from application or target to Fellow. The stages of the portal’s CRM sheet (Targets, FOF – They are Aware, FOF – Teaser Received, Fellows, Lost), with shorter names in the Hub.',
 		stages: [
 			{
 				id: 'application',
@@ -76,13 +80,13 @@ export const PIPELINES: Record<ContactType, Pipeline> = {
 			{ id: 'target', label: 'Targets', followUpDays: 7, followUp: 'Plan the first interaction' },
 			{
 				id: 'aware',
-				label: 'FOF – They are Aware',
+				label: 'Aware',
 				followUpDays: 7,
 				followUp: 'Send the teaser'
 			},
 			{
 				id: 'teaser',
-				label: 'FOF – Teaser Received',
+				label: 'Teaser received',
 				followUpDays: 7,
 				followUp: 'Follow up on the teaser'
 			},

@@ -52,3 +52,13 @@ a JSON fixture instead (`SHEETS_FIXTURE` in `functions/.env.local`).
 Dry run and sync: 7 contacts in the right stages, 3 tasks, 2 PERMA, 2 finance; second run creates
 and moves nothing; no automation ran on imported contacts; no password hash or reset token reached
 Firestore; Claude's `flf_get_contact` shows the portal fields but no PERMA or income.
+
+## Dates and errors
+
+- A contact's **created** date is the earliest date the sheet has for them (applied, pledged, a
+  meeting); its **last activity** is the latest (CRM `Last Meeting (N8N)`, Profiles
+  `Last Interaction`, a meeting), or a later Hub activity. Contacts imported before this rule are
+  corrected once (`sheetDates`).
+- A spreadsheet error in a cell (`#DIV/0!`, `#N/A`, `#REF!`…) is read as empty.
+- Rows not imported (team members, unknown stages, test applications) are listed in the
+  import's run log under "skipped".

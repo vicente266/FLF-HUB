@@ -156,7 +156,8 @@
 				<div class="mt-3 flex justify-between border-t border-line/50 pt-2 text-xs text-ink-soft">
 					<span>
 						Last run {formatDateTime(s?.lastRunAt)} · {s?.runs ?? 0}
-						{s?.runs === 1 ? 'run' : 'runs'}
+						{s?.runs === 1 ? 'run' : 'runs'}{#if s?.errors}
+							· <span class="text-danger">{s.errors} failed</span>{/if}
 					</span>
 					{#if s?.lastError}<span class="truncate pl-2 text-danger" title={s.lastError}>
 							{s.lastError}

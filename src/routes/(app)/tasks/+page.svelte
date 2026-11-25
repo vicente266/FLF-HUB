@@ -36,7 +36,12 @@
 		return listen<Task>(q, (rows) => (tasks = rows));
 	});
 
-	const due = (t: Task) => toDate(t.dueAt)?.getTime() ?? 0;
+	// No due date: its own group, never Overdue.
+	const due = (t: Task) => toDate(t.dueAt)?.getTime() ?? null;
+	const dated = (t: Task, test: (ms: number) => boolean) => {
+		const ms = due(t);
+		return ms !== null && test(ms);
+	};
 	// Midnight tonight, local time.
 	// Re-read every minute, so a page left open past midnight moves tasks to the right group.
 	let now = $state(Date.now());
@@ -45,14 +50,26 @@
 		return () => clearInterval(timer);
 	});
 	let endOfToday = $derived(new Date(new Date(now).toDateString()).getTime() + 86_400_000 - 1);
+	// Sunday night, local time (the week runs Monday to Sunday).
+	let endOfWeek = $derived(endOfToday + ((7 - new Date(now).getDay()) % 7) * 86_400_000);
 	let groups = $derived([
-		{ label: 'Overdue', rows: tasks.filter((t) => due(t) < now), tone: 'text-danger' },
+		{ label: 'Overdue', rows: tasks.filter((t) => dated(t, (d) => d < now)), tone: 'text-danger' },
 		{
 			label: 'Today',
-			rows: tasks.filter((t) => due(t) >= now && due(t) <= endOfToday),
+			rows: tasks.filter((t) => dated(t, (d) => d >= now && d <= endOfToday)),
 			tone: 'text-primary-700'
 		},
-		{ label: 'Later', rows: tasks.filter((t) => due(t) > endOfToday), tone: 'text-ink-soft' }
+		{
+			label: 'This week',
+			rows: tasks.filter((t) => dated(t, (d) => d > endOfToday && d <= endOfWeek)),
+			tone: 'text-ink'
+		},
+		{
+			label: 'Later',
+			rows: tasks.filter((t) => dated(t, (d) => d > endOfWeek)),
+			tone: 'text-ink-soft'
+		},
+		{ label: 'No due date', rows: tasks.filter((t) => due(t) === null), tone: 'text-ink-soft' }
 	]);
 
 	async function done(id: string) {

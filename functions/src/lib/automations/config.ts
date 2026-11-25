@@ -32,7 +32,7 @@ export const AUTOMATIONS: AutomationDef[] = [
 		id: 'next-step-task',
 		name: 'Task per next step',
 		description:
-			'When someone sets a contact’s next step in the Hub, the previous next-step task is closed and its owner (or, without one, whoever set it) gets a task: “Plan Interaction” → plan the next interaction (2 days), “Awaiting for Response” → follow up (7 days).',
+			'When someone sets a contact’s next step in the Hub, the previous next-step task is closed and its owner (or, without one, whoever set it) gets a task: “Plan Interaction” → plan the next interaction (2 days), “Awaiting response” → follow up (7 days).',
 		trigger: 'contact.nextStep',
 		uses: [],
 		defaultEnabled: true
