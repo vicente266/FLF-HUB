@@ -35,7 +35,7 @@ export interface Knowledge {
 	description: string;
 	/** Optional expiry as `YYYY-MM-DD`; valid through that day. */
 	expiredAt?: string;
-	/** How Claude uses it; missing = `always` (entries written before uses existed). */
+	/** How Claude uses it; missing = `relevant` (entries written before uses existed). */
 	use?: Use;
 	topics?: string[];
 	/** `drive` when imported from the Knowledge folder; missing = written in the Hub. */
@@ -56,7 +56,7 @@ export function isExpired(entry: { expiredAt?: string }, today = todayIso()): bo
 	return !!entry.expiredAt && entry.expiredAt < today;
 }
 
-const useOf = (e: Knowledge): Use => e.use ?? 'always';
+const useOf = (e: Knowledge): Use => e.use ?? 'relevant';
 
 /**
  * One entry as its own `<entry label="…" topics="…" valid_until="…">` block, text verbatim inside,
@@ -124,7 +124,7 @@ export async function list(): Promise<Entry[]> {
 			label: x.label ?? '',
 			description: x.description ?? '',
 			expiredAt: x.expiredAt ?? '',
-			use: (x.use as Use) ?? 'always',
+			use: (x.use as Use) ?? 'relevant',
 			topics: x.topics ?? [],
 			source: x.source === 'drive' ? 'drive' : 'hub',
 			url: x.url ?? '',
@@ -145,7 +145,7 @@ const who = (auth: any) => {
 };
 
 function cleanUse(p: any): { use: Use; topics: string[] } {
-	const use = (p?.use ?? 'always') as Use;
+	const use = (p?.use ?? 'relevant') as Use;
 	if (!USES.some((u) => u.id === use))
 		throw new HttpsError('invalid-argument', 'Pick how Claude uses it: always, relevant or off.');
 	const topics = Array.isArray(p?.topics)

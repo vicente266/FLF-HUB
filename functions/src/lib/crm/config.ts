@@ -69,7 +69,7 @@ export const PIPELINES: Record<ContactType, Pipeline> = {
 		label: 'Fellow',
 		plural: 'Fellows',
 		description:
-			'Founders, from application or target to Fellow. The stages of the portal’s CRM sheet (Targets, FOF – They are Aware, FOF – Teaser Received, Fellows, Lost), with shorter names in the Hub.',
+			'Founders, from application or target to Fellow. The stages of the portal’s CRM sheet (Targets, FOF – They are Aware, FOF – Teaser Received, Fellows, Lost). FOF = Friend of Fellowship.',
 		stages: [
 			{
 				id: 'application',
@@ -80,17 +80,17 @@ export const PIPELINES: Record<ContactType, Pipeline> = {
 			{ id: 'target', label: 'Targets', followUpDays: 7, followUp: 'Plan the first interaction' },
 			{
 				id: 'aware',
-				label: 'Aware',
+				label: 'FOF – Aware',
 				followUpDays: 7,
 				followUp: 'Send the teaser'
 			},
 			{
 				id: 'teaser',
-				label: 'Teaser received',
+				label: 'FOF – Teaser received',
 				followUpDays: 7,
 				followUp: 'Follow up on the teaser'
 			},
-			{ id: 'fellow', label: 'Fellows', final: true },
+			{ id: 'fellow', label: 'Fellow (cohort)', final: true },
 			{ id: 'lost', label: 'Lost', final: true, askReason: true }
 		]
 	},
@@ -143,7 +143,7 @@ export const PIPELINES: Record<ContactType, Pipeline> = {
 				followUp: 'Plan the next conversation'
 			},
 			{ id: 'proposal', label: 'Proposal', followUpDays: 5, followUp: 'Follow up on the proposal' },
-			{ id: 'won', label: 'Partners', final: true },
+			{ id: 'won', label: 'Active Partner', final: true },
 			{ id: 'lost', label: 'Lost', final: true, askReason: true }
 		]
 	}

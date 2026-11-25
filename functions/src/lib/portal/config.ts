@@ -113,6 +113,15 @@ export const TABS = {
 
 export type TabKey = keyof typeof TABS;
 
+/**
+ * The Events tab's Type → the name the Hub shows. Meeting titles are free text from the calendars,
+ * so the Hub names each meeting "Type · People" and keeps the calendar title underneath.
+ */
+export const MEETING_TYPES: Record<string, string> = {
+	'1-2-1': '1:1 Mentorship',
+	workshop: 'Workshop'
+};
+
 /** CRM sheet stage → Hub fellow stage. */
 export const STAGE_MAP: Record<string, string> = {
 	targets: 'target',

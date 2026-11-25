@@ -20,7 +20,7 @@
 		uses: KnowledgeUseOption[];
 	} = $props();
 
-	let draft = $state({ label: '', description: '', expiredAt: '', use: 'always', topics: '' });
+	let draft = $state({ label: '', description: '', expiredAt: '', use: 'relevant', topics: '' });
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 	let imported = $derived(entry?.source === 'drive');
@@ -32,7 +32,7 @@
 				label: entry?.label ?? '',
 				description: entry?.description ?? '',
 				expiredAt: entry?.expiredAt ?? '',
-				use: entry?.use ?? 'always',
+				use: entry?.use ?? 'relevant',
 				topics: (entry?.topics ?? []).join(', ')
 			};
 			error = null;

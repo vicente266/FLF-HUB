@@ -28,6 +28,7 @@
 		return events.filter(
 			(e) =>
 				e.title.toLowerCase().includes(q) ||
+				(e.name ?? '').toLowerCase().includes(q) ||
 				e.participants.some((p) => p.name.toLowerCase().includes(q))
 		);
 	});
@@ -75,14 +76,12 @@
 						</span>
 						<div class="min-w-0 flex-1">
 							<div class="font-medium">
-								{e.title}
-								{#if e.type}
-									<span class="ml-1 text-xs font-normal text-ink-soft">· {e.type}</span>
-								{/if}
+								{e.name ?? e.title}
 								{#if e.showInPortal}
 									<span class="ml-1 text-xs font-normal text-primary-700">· in the portal</span>
 								{/if}
 							</div>
+							{#if e.name}<div class="text-xs text-ink-soft">{e.title}</div>{/if}
 							<div class="mt-0.5 flex flex-wrap gap-x-2 text-xs text-ink-soft">
 								{#each e.participants as p, i (i)}
 									{#if p.contactId}

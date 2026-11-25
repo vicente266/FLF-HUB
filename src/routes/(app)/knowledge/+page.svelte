@@ -54,7 +54,7 @@
 			.catch((e) => (error = errorText(e)));
 	});
 
-	const useOf = (e: KnowledgeEntry): KnowledgeUse => e.use ?? 'always';
+	const useOf = (e: KnowledgeEntry): KnowledgeUse => e.use ?? 'relevant';
 	// In force = not expired; expired ones stay reachable to re-date or delete.
 	let current = $derived(entries.filter((e) => !isExpired(e)));
 	let expired = $derived(entries.filter((e) => isExpired(e)));

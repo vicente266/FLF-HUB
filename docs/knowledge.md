@@ -40,11 +40,10 @@ Every entry has a `use`, set on the Knowledge page (a switch on each row) or by 
 `flf_save_knowledge`:
 
 - **Always** (`always`): its text goes with every `flf_get_knowledge`, so Claude reads it before
-  writing anything about FLF. The default for entries written in the Hub (and for older entries
-  without a `use`).
+  writing anything about FLF. Set it on an entry once it is approved, not on drafts.
 - **When relevant** (`relevant`): Claude gets only an index (id, title, topics) and asks for the
-  text with `flf_get_knowledge` `ids` or `topic` when the task needs it. The default for imported
-  documents, which can be long.
+  text with `flf_get_knowledge` `ids` or `topic` when the task needs it. The default for every new
+  entry (written in the Hub or imported) and for older entries without a `use`.
 - **Off** (`off`): kept, never given to Claude.
 
 `topics` (up to 8 free-text tags) let Claude read every entry on one subject (`topic`). Expired

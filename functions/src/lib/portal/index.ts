@@ -9,6 +9,7 @@ import {
 	DEFAULT_SPREADSHEET_ID,
 	EVENT_PARTICIPANTS,
 	MAX_ROWS,
+	MEETING_TYPES,
 	STAGE_MAP,
 	TABS,
 	type TabKey
@@ -135,6 +136,9 @@ export interface Plan {
 
 /** One meeting from the Events tab. */
 export interface CalendarEvent {
+	/** "Type · People", the same format for every meeting. */
+	name: string;
+	/** As written in the calendar. */
 	title: string;
 	type: string;
 	date: Date | null;
@@ -350,11 +354,14 @@ export function plan(
 			)
 				.filter(Boolean)
 				.map((name) => ({ name, contactId: byName.get(lower(name)) ?? null }));
+			const type = r['Type'].replace(/^'/, '');
+			const typeLabel = MEETING_TYPES[lower(type)] ?? (type || 'Meeting');
 			p.events.push({
 				id,
 				data: {
+					name: `${typeLabel} · ${participants.map((x) => x.name).join(', ')}`,
 					title: r['Title'],
-					type: r['Type'].replace(/^'/, ''),
+					type,
 					date,
 					description: r['Description'],
 					showInPortal: yes(r['Show in portal']),
@@ -762,7 +769,7 @@ export async function run() {
 		for (const cid of e.data.contactIds) {
 			b.set(crm.contacts.doc(cid).collection('activity').doc(e.id), {
 				kind: 'meeting',
-				text: e.data.type ? `${e.data.type}: ${e.data.title}` : e.data.title,
+				text: `${e.data.name} (“${e.data.title}”)`,
 				by: 'Calendar',
 				via: 'portal',
 				at

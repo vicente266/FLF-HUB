@@ -153,6 +153,9 @@ export interface ContactDraft {
 /** A meeting from the portal sheet's Events tab (n8n's "Calendar → Events database"). */
 export interface CalendarEvent {
 	id: string;
+	/** "Type · People"; missing on meetings imported before it existed. */
+	name?: string;
+	/** As written in the calendar. */
 	title: string;
 	type: string;
 	date: unknown;
