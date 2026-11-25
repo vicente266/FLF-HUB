@@ -68,23 +68,6 @@ export const CONNECTORS: Connector[] = [
 		testable: true
 	},
 	{
-		id: 'slack',
-		name: 'Slack',
-		category: 'messaging',
-		availability: 'live',
-		description:
-			'Posts to the team channel: new applications, contacts that need attention and the daily digest.',
-		feeds: ['Automations'],
-		secrets: ['SLACK_WEBHOOK_URL'],
-		settings: [],
-		setup: [
-			'In Slack, create an app with an Incoming Webhook for the team channel.',
-			'Developer only: `firebase functions:secrets:set SLACK_WEBHOOK_URL` with the webhook URL, then deploy.',
-			'Press Test connection: a message should appear in the channel.'
-		],
-		testable: true
-	},
-	{
 		id: 'n8n',
 		name: 'n8n workflows',
 		category: 'platform',
@@ -110,6 +93,30 @@ export const CONNECTORS: Connector[] = [
 		setup: [
 			'n8n → Settings → n8n API: create an API key (n8n has no read-only key: keep it in Secret Manager only). Developer only: `firebase functions:secrets:set N8N_API_KEY`, deploy.',
 			'Fill in the address and the workflows, then press Test.'
+		],
+		testable: true
+	},
+	{
+		id: 'knowledge-folder',
+		name: 'Knowledge folder (Drive)',
+		category: 'ai',
+		availability: 'live',
+		description:
+			'A Google Drive folder whose Google Docs and text files become Knowledge entries for Claude. The Hub only reads it, every night and when you press Sync now.',
+		feeds: ['Knowledge'],
+		secrets: [],
+		settings: [
+			{
+				key: 'folderId',
+				label: 'Folder id',
+				help: 'The part after /folders/ in the folder link. Leave empty for the default FLF Knowledge folder.',
+				kind: 'text'
+			}
+		],
+		setup: [
+			'Share the folder with the Cloud Functions service account (900685987021-compute@developer.gserviceaccount.com) as **Viewer**.',
+			'Press Test connection: it lists the documents it can import.',
+			'Knowledge → Sync now imports them; it runs again every night.'
 		],
 		testable: true
 	},

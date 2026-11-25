@@ -25,7 +25,6 @@ export interface ConnectionState {
 
 /** Secrets a check may use, passed in by the dispatcher that holds them. */
 export interface Secrets {
-	slackWebhookUrl?: string;
 	n8nApiKey?: string;
 }
 
@@ -173,24 +172,8 @@ export async function readSheet(spreadsheetId: string, range: string): Promise<s
 	return res.data.values ?? [];
 }
 
-/** Post one message to the team channel. Silently skipped when Slack is not set up. */
-export async function slack(webhookUrl: string | undefined, text: string): Promise<boolean> {
-	if (!webhookUrl) return false;
-	const res = await fetch(webhookUrl, {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ text })
-	});
-	if (!res.ok) throw new Error(`Slack answered ${res.status}`);
-	return true;
-}
-
 /** Check one connection for real and return what to record. Never throws. */
-async function check(
-	id: string,
-	secrets: Secrets,
-	manual: boolean
-): Promise<{ status: Status; detail: string }> {
+async function check(id: string, secrets: Secrets): Promise<{ status: Status; detail: string }> {
 	const c = connector(id);
 	if (!c) return { status: 'error', detail: 'Unknown connection.' };
 	if (c.availability === 'planned') return { status: 'planned', detail: 'Not built yet.' };
@@ -246,6 +229,23 @@ async function check(
 				}
 				return { status: failed ? 'error' : 'ok', detail: lines.join(' · ') };
 			}
+			case 'knowledge-folder': {
+				// Lazy: knowledge is not needed by the other checks.
+				const knowledge = await import('../knowledge/index.js');
+				const { files } = await knowledge.listFolder();
+				const readable = files.filter((f) =>
+					[
+						'application/vnd.google-apps.document',
+						'text/plain',
+						'text/markdown',
+						'text/x-markdown'
+					].includes(f.mimeType)
+				).length;
+				return {
+					status: 'ok',
+					detail: `${files.length} files in the folder, ${readable} importable (Google Docs, text, Markdown).`
+				};
+			}
 			case 'claude-connector': {
 				if (!CONNECTOR_URL) {
 					return {
@@ -261,14 +261,6 @@ async function check(
 					detail: `${n} active connection${n === 1 ? '' : 's'} · ${CONNECTOR_URL}`
 				};
 			}
-			case 'slack': {
-				if (!secrets.slackWebhookUrl)
-					return { status: 'not_configured', detail: 'Slack link not added yet (developer step).' };
-				// Only a test someone pressed posts; the hourly check would spam the channel.
-				if (!manual) return { status: 'ok', detail: 'Webhook URL set.' };
-				await slack(secrets.slackWebhookUrl, 'FLF Hub: connection test ✅');
-				return { status: 'ok', detail: 'Test message sent.' };
-			}
 		}
 		return { status: 'error', detail: 'No check for this connection.' };
 	} catch (err) {
@@ -277,8 +269,8 @@ async function check(
 }
 
 /** Run a check and store the result on the connection's document. */
-export async function test(id: string, secrets: Secrets, manual = true) {
-	const result = await check(id, secrets, manual);
+export async function test(id: string, secrets: Secrets) {
+	const result = await check(id, secrets);
 	await collection.doc(id).set(
 		{
 			status: result.status,
@@ -294,7 +286,7 @@ export async function test(id: string, secrets: Secrets, manual = true) {
 /** Check every live connection. Used by the hourly health cron. */
 export async function testAll(secrets: Secrets) {
 	for (const c of CONNECTORS) {
-		const result = await test(c.id, secrets, false);
+		const result = await test(c.id, secrets);
 		if (result.status === 'error') logger.warn(`${c.id}: ${result.detail}`);
 	}
 }

@@ -33,3 +33,34 @@ for funds and universities, messaging. Ported from the EBS Hub's knowledge store
 The actions live in `coreAction` (`knowledge.*`), like the Claude connector's `claude.*`, rather than
 a callable of their own: a new callable on this project needs Cloud Run's invoker check turned off by
 hand (the organisation blocks public access), so small features share `coreAction`.
+
+## How Claude uses each entry
+
+Every entry has a `use`, set on the Knowledge page (a switch on each row) or by Claude with
+`flf_save_knowledge`:
+
+- **Always** (`always`): its text goes with every `flf_get_knowledge`, so Claude reads it before
+  writing anything about FLF. The default for entries written in the Hub (and for older entries
+  without a `use`).
+- **When relevant** (`relevant`): Claude gets only an index (id, title, topics) and asks for the
+  text with `flf_get_knowledge` `ids` or `topic` when the task needs it. The default for imported
+  documents, which can be long.
+- **Off** (`off`): kept, never given to Claude.
+
+`topics` (up to 8 free-text tags) let Claude read every entry on one subject (`topic`). Expired
+entries are left out whatever their use.
+
+## The Knowledge folder (Drive)
+
+- Connection **Knowledge folder (Drive)** (`knowledge-folder`): a folder id (default the FLF
+  Knowledge folder, `DEFAULT_FOLDER_ID` in `functions/src/lib/knowledge/config.ts`). Share the
+  folder with the Functions service account as **Viewer**; Test connection lists what it can import.
+- Import (`core:knowledge.sync`, **Sync now** on the Knowledge page, `flf_sync_knowledge`, and the
+  `knowledge-sync` automation every night at 03:00): each Google Doc, text or Markdown file becomes
+  the entry `drive-<file id>` (title = file name, text up to 50,000 characters, link to the file).
+  A file's text is re-read only when it changed; a file removed from the folder takes its entry
+  with it. Other file types are listed as not importable. Read only: the Hub never writes to Drive.
+- An imported entry's title and text are edited in Drive; in the Hub only its use, topics and
+  expiry change, and it can't be deleted there (remove the file, or set it to Off).
+- Reads: one Drive listing per import plus one export per changed file; one Firestore query of the
+  imported entries.

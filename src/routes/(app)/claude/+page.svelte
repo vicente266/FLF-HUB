@@ -59,7 +59,7 @@
 		'Add Marta Ruiz (marta@stackr.io, Stackr) as a prospective Fellow from a referral and note our call.',
 		'Move Amara Okafor to Offer and give me a task to send the pledge on Friday.',
 		'Which Investors have we not touched in two weeks?',
-		'Is every connection working? Turn the daily digest on.'
+		'Is every connection working? Import the Knowledge folder now.'
 	];
 </script>
 

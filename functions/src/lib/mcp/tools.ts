@@ -149,7 +149,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
 	const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
 	const write = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 	const destroy = { readOnlyHint: false, destructiveHint: true, openWorldHint: false };
-	/** Reaches an outside system (Slack, n8n, the portal sheet). */
+	/** Reaches an outside system (n8n, the portal sheet, the Knowledge folder). */
 	const external = { readOnlyHint: false, destructiveHint: false, openWorldHint: true };
 
 	// ---------------------------------------------------------------- reading
@@ -604,7 +604,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
 		{
 			title: 'List connections',
 			description:
-				'Every system the Hub connects to (the FLF Portal sheet, n8n, Slack, the Claude ' +
+				'Every system the Hub connects to (the FLF Portal sheet, n8n, the Knowledge folder, the Claude ' +
 				'connector): status, last check, what it feeds, its ' +
 				'non-secret settings and the steps to set it up. Secrets are never shown.',
 			inputSchema: z.object({}),
@@ -971,20 +971,38 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			title: 'FLF knowledge',
 			description:
 				'What the team wants you to know about FLF (the Fellowship, the Pledge, offers, the pitch ' +
-				'for funds and universities, messaging). Read it before drafting any email, pitch or reply ' +
-				'about FLF, and do not contradict it. `active` holds the entries in force; with ' +
-				'include_all=true you also get every entry with its id, to edit or delete one.',
-			inputSchema: z.object({ include_all: z.boolean().default(false) }),
+				'for funds and universities, messaging). Call it before drafting any email, pitch or ' +
+				'reply about FLF, and do not contradict it. Without arguments you get the entries the ' +
+				'team marked “Always”, plus an index (id, title, topics) of the “When relevant” ones: ' +
+				'call again with their ids, or a topic, to read those that fit the task. include_all ' +
+				'adds every entry with its id, use and source, to manage them.',
+			inputSchema: z.object({
+				ids: z.array(ID).max(50).optional().describe('“When relevant” entries to read'),
+				topic: z.string().max(30).optional().describe('Read every entry with this topic'),
+				include_all: z.boolean().default(false)
+			}),
 			annotations: read
 		},
 		run(
 			'flf_get_knowledge',
-			(a) => (a.include_all ? 'all' : 'active'),
+			(a) =>
+				a.ids?.length ? 'ids' : a.topic ? `topic:${a.topic}` : a.include_all ? 'all' : 'active',
 			async (a) => {
 				await need('knowledge.any.read');
+				if (a.ids?.length || a.topic) {
+					const r = (await act('core', 'knowledge.get', {
+						ids: a.ids ?? [],
+						topic: a.topic ?? ''
+					})) as {
+						text: string;
+					};
+					await audit(caller, 'flf_get_knowledge', a.ids?.length ? a.ids : [`topic:${a.topic}`]);
+					return { content: [{ type: 'text' as const, text: knowledgeText(r.text) }] };
+				}
 				const r = (await act('core', 'knowledge.list', {})) as {
-					entries: { id: string }[];
+					entries: { id: string; description?: string }[];
 					active: string;
+					relevant: { id: string; label: string; topics: string[] }[];
 				};
 				await audit(
 					caller,
@@ -992,11 +1010,44 @@ export function registerTools(server: McpServer, caller: Caller): void {
 					r.entries.map((e) => e.id)
 				);
 				const content = [{ type: 'text' as const, text: knowledgeText(r.active) }];
-				// Every entry with its id (to edit or delete one), as data like any other Hub content.
+				if (r.relevant.length)
+					content.push({
+						type: 'text' as const,
+						text: wrapped({
+							whenRelevant: r.relevant,
+							howToRead: 'flf_get_knowledge with ids or topic'
+						})
+					});
+				// Every entry with its id, use and source (to manage them), without the long texts.
 				if (a.include_all)
-					content.push({ type: 'text' as const, text: wrapped({ entries: r.entries }) });
+					content.push({
+						type: 'text' as const,
+						text: wrapped({
+							entries: r.entries.map(({ description, ...e }) => ({
+								...e,
+								chars: description?.length ?? 0
+							}))
+						})
+					});
 				return { content };
 			}
+		)
+	);
+
+	server.registerTool(
+		'flf_sync_knowledge',
+		{
+			title: 'Import the Knowledge folder',
+			description:
+				'Import the Knowledge folder in Google Drive now (new documents start as “When relevant”). ' +
+				'Read only on Drive.',
+			inputSchema: z.object({}),
+			annotations: external
+		},
+		run(
+			'flf_sync_knowledge',
+			() => 'folder',
+			async () => data(await act('core', 'knowledge.sync', {}))
 		)
 	);
 
@@ -1006,13 +1057,19 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			title: 'Save knowledge entry',
 			description:
 				'Add a knowledge entry, or edit one by id (ids from flf_get_knowledge include_all=true): ' +
-				'when editing, send only what changes. expired_at (YYYY-MM-DD) is the last day it ' +
+				'when editing, send only what changes. An entry imported from Drive only takes use, ' +
+				'topics and expired_at (its text is edited in Drive). expired_at (YYYY-MM-DD) is the last day it ' +
 				'applies; "" keeps it in force. Only when the person asks to record or change something.',
 			inputSchema: z.object({
 				id: ID.optional(),
 				label: z.string().max(80).optional(),
 				description: z.string().min(1).max(8000).optional().describe('Required for a new entry'),
-				expired_at: z.union([DATE, z.literal('')]).optional()
+				expired_at: z.union([DATE, z.literal('')]).optional(),
+				use: z
+					.enum(['always', 'relevant', 'off'])
+					.optional()
+					.describe('always: read before every FLF text; relevant: read when it fits; off: never'),
+				topics: z.array(z.string().max(30)).max(8).optional()
 			}),
 			annotations: write
 		},
@@ -1022,7 +1079,13 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			async (a) => {
 				const r = await act('core', 'knowledge.save', {
 					id: a.id ?? null,
-					entry: { label: a.label, description: a.description, expiredAt: a.expired_at }
+					entry: {
+						label: a.label,
+						description: a.description,
+						expiredAt: a.expired_at,
+						use: a.use,
+						topics: a.topics
+					}
 					// Fields left out (undefined) keep their stored value when editing.
 				});
 				return data(r);
@@ -1075,8 +1138,8 @@ export function registerTools(server: McpServer, caller: Caller): void {
 		{
 			title: 'Test connection',
 			description:
-				'Check one connection now (portal-sheet, n8n, slack, claude-connector) and record ' +
-				'the result in Health. Testing Slack posts a test message to the team channel.',
+				'Check one connection now (portal-sheet, n8n, knowledge-folder, claude-connector) and ' +
+				'record the result in Health.',
 			inputSchema: z.object({ connection_id: ID }),
 			annotations: external
 		},

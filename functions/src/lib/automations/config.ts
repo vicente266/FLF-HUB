@@ -53,18 +53,8 @@ export const AUTOMATIONS: AutomationDef[] = [
 			'Every morning, open contacts with no activity for 14 days are marked "needs attention" and get one check-in task for their owner (or whoever last moved them in the Hub; with neither, only the flag). A note, a move or a meeting clears the flag and closes the task.',
 		trigger: 'schedule',
 		schedule: 'Every day at 08:00 (Madrid)',
-		uses: ['slack'],
+		uses: [],
 		defaultEnabled: true
-	},
-	{
-		id: 'daily-digest',
-		name: 'Daily digest',
-		description:
-			'Every morning, posts yesterday’s new contacts, today’s due tasks and the stale count to Slack.',
-		trigger: 'schedule',
-		schedule: 'Every day at 08:00 (Madrid)',
-		uses: ['slack'],
-		defaultEnabled: false
 	},
 	{
 		id: 'portal-sync',
@@ -75,6 +65,16 @@ export const AUTOMATIONS: AutomationDef[] = [
 		schedule: 'Every day at 03:00 (Madrid)',
 		uses: ['portal-sheet'],
 		defaultEnabled: false
+	},
+	{
+		id: 'knowledge-sync',
+		name: 'Import the Knowledge folder',
+		description:
+			'Every night, imports the Google Docs and text files of the Knowledge folder in Drive as Knowledge entries (new ones start as “When relevant”); a file removed from the folder leaves Knowledge. Read only on Drive.',
+		trigger: 'schedule',
+		schedule: 'Every day at 03:00 (Madrid)',
+		uses: ['knowledge-folder'],
+		defaultEnabled: true
 	}
 ];
 

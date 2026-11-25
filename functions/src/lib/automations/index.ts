@@ -3,7 +3,6 @@ import { db } from '../../firestore';
 import { serverTimestamp, increment, str, createLogger, Timestamp } from '../utils';
 import * as crm from '../crm/index';
 import { MEETING_STAGES, nextStepOf, stageOf, STALE_DAYS, type ContactType } from '../crm/config';
-import * as connections from '../connections/index';
 import { AUTOMATIONS, N8N_AUTOMATIONS, automation } from './config';
 
 const logger = createLogger('automations');
@@ -168,7 +167,7 @@ export async function meetingSuggestions(meetings: NewMeeting[]) {
 }
 
 /** Daily: flag open contacts with no activity for STALE_DAYS. */
-export async function staleContacts(slackUrl: string | undefined) {
+export async function staleContacts() {
 	await run('stale-contacts', async () => {
 		const cutoff = Timestamp.fromMillis(Date.now() - STALE_DAYS * DAY);
 		const snap = await crm.contacts
@@ -190,30 +189,16 @@ export async function staleContacts(slackUrl: string | undefined) {
 			if (open.docs.some((t) => t.data().automationId === 'stale-contacts')) continue;
 			await addTask('stale-contacts', doc.id, c, `No activity for ${STALE_DAYS} days: check in`, 1);
 		}
-		await connections.slack(
-			slackUrl,
-			`${snap.size} contacts need attention (no activity for ${STALE_DAYS} days).`
-		);
 		return `${snap.size} contacts flagged`;
 	});
 }
 
-/** Daily: Slack summary. */
-export async function dailyDigest(slackUrl: string | undefined) {
-	await run('daily-digest', async () => {
-		if (!slackUrl) return null;
-		const since = Timestamp.fromMillis(Date.now() - DAY);
-		const endOfDay = Timestamp.fromMillis(Date.now() + DAY);
-		const [created, due, stale] = await Promise.all([
-			crm.contacts.where('createdAt', '>=', since).count().get(),
-			crm.tasks.where('done', '==', false).where('dueAt', '<=', endOfDay).count().get(),
-			crm.contacts.where('open', '==', true).where('needsAttention', '==', true).count().get()
-		]);
-		await connections.slack(
-			slackUrl,
-			`*FLF Hub daily*\n• New contacts (24h): ${created.data().count}\n• Tasks due today or overdue: ${due.data().count}\n• Need attention: ${stale.data().count}`
-		);
-		return 'Digest posted';
+export async function knowledgeSync() {
+	await run('knowledge-sync', async () => {
+		const knowledge = await import('../knowledge/index.js');
+		const r = await knowledge.importFolder();
+		if (!r.added && !r.updated && !r.removed) return null; // nothing changed: not a run
+		return `${r.imported} documents (${r.added} new, ${r.updated} updated, ${r.removed} removed)`;
 	});
 }
 

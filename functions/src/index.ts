@@ -24,8 +24,6 @@ import * as portal from './lib/portal/index';
 
 setGlobalOptions({ maxInstances: 10, region: REGION });
 
-/** Slack Incoming Webhook URL of the team channel. */
-const slackWebhookUrl = defineSecret('SLACK_WEBHOOK_URL');
 /** n8n API key, used only to list executions (Health). */
 const n8nApiKey = defineSecret('N8N_API_KEY');
 /** Signs the Claude connector's clients and tokens and seals its keys (docs/claude-connector.md). */
@@ -45,11 +43,10 @@ const userLogger = utils.createLogger('user');
 
 /** Secrets for connection checks, read only inside handlers that declared them. */
 const secrets = (): connections.Secrets => ({
-	slackWebhookUrl: optional(slackWebhookUrl),
 	n8nApiKey: optional(n8nApiKey)
 });
 /** Every secret a connection check reads. */
-const checkSecrets = [slackWebhookUrl, n8nApiKey];
+const checkSecrets = [n8nApiKey];
 
 /*
  * EVERY callable is one `<feature>Action` dispatcher (see dispatch.ts). Add an action to the
@@ -117,6 +114,10 @@ export const coreAction = onCall(
 		'knowledge.save': { permission: 'knowledge.any.write', handler: knowledge.actions.save },
 		/** Delete a Knowledge entry. */
 		'knowledge.delete': { permission: 'knowledge.any.write', handler: knowledge.actions.delete },
+		/** The full text of chosen entries (by ids or topic), for Claude's "when relevant" ones. */
+		'knowledge.get': { permission: 'knowledge.any.read', handler: knowledge.actions.get },
+		/** Import the Knowledge Drive folder now (read only on Drive). */
+		'knowledge.sync': { permission: 'knowledge.any.write', handler: knowledge.actions.sync },
 		/** The Claude consent page: which app asks and where it sends you back. Writes nothing. */
 		'claude.client': {
 			handler: async (p) => claude.describeClient(claude.keys(flfMcpKey.value()), p)
@@ -269,7 +270,7 @@ export const crmContactWritten = onDocumentWritten('contact/{id}', async (event)
 	const c = after.data() as crm.Contact;
 	const before = event.data?.before?.exists ? (event.data.before.data() as crm.Contact) : null;
 	// The portal import writes `portal.syncedAt`: those writes are copies of the sheet, so no
-	// owner assignment, Slack alert or follow-up task fires from them.
+	// follow-up or next-step task fires from them.
 	const synced = (x: crm.Contact | null) => (x as any)?.portal?.syncedAt?.toMillis?.();
 	if (synced(c) && synced(c) !== synced(before)) return;
 	// Created in the Hub: its first stage's follow-up (imports are skipped just above).
@@ -279,13 +280,11 @@ export const crmContactWritten = onDocumentWritten('contact/{id}', async (event)
 		await automations.onNextStepChanged(event.params.id, c);
 });
 
-/** Every morning: stale contacts, the digest, and the Claude connector's expired records. */
+/** Every morning: stale contacts and the Claude connector's expired records. */
 export const automationsDaily = onSchedule(
-	{ schedule: '0 8 * * *', timeZone: 'Europe/Madrid', secrets: [slackWebhookUrl] },
+	{ schedule: '0 8 * * *', timeZone: 'Europe/Madrid' },
 	async () => {
-		const url = optional(slackWebhookUrl);
-		await automations.staleContacts(url);
-		await automations.dailyDigest(url);
+		await automations.staleContacts();
 		const cleaned = await claude.cleanUp();
 		utils.createLogger('claude-connector').log(`clean-up ${JSON.stringify(cleaned)}`);
 	}
@@ -297,7 +296,7 @@ export const automationsDaily = onSchedule(
  */
 export const claudeMcp = onRequest(
 	{
-		// The tools run other dispatchers' actions (connections:test reads Slack and n8n),
+		// The tools run other dispatchers' actions (connections:test reads n8n),
 		// so the connector holds those secrets too.
 		secrets: [flfMcpKey, ...checkSecrets],
 		timeoutSeconds: 60,
@@ -318,7 +317,10 @@ export const claudeMcp = onRequest(
 /** Every night: import the portal sheet (read-only on the sheet). */
 export const portalNightly = onSchedule(
 	{ schedule: '0 3 * * *', timeZone: 'Europe/Madrid', timeoutSeconds: 540, memory: '512MiB' },
-	async () => automations.portalSync()
+	async () => {
+		await automations.portalSync();
+		await automations.knowledgeSync();
+	}
 );
 
 /** Every hour: check every connection so Health is current. */
