@@ -47,7 +47,6 @@
 		name: string;
 		active: boolean;
 		tags: string[];
-		flf: boolean;
 		lastRun: { at: string | null; status: string } | null;
 		errors24h: number;
 		lastErrorAt: string | null;
@@ -55,13 +54,11 @@
 	}
 	let n8n = $state<N8nWorkflow[] | null>(null);
 	let n8nError = $state<string | null>(null);
-	// FLF's workflows first; the rest of the n8n instance is one click away.
-	let flfOnly = $state(true);
-	let shown = $derived((n8n ?? []).filter((w) => !flfOnly || w.flf));
 	function loadN8n() {
 		n8nError = null;
 		callAction<{ workflows: N8nWorkflow[] }>('automations:n8n.workflows')
-			.then((r) => (n8n = r.workflows))
+			// Until the backend that returns FLF's only is deployed, drop the ones it marks as not FLF.
+			.then((r) => (n8n = r.workflows.filter((w) => (w as { flf?: boolean }).flf !== false)))
 			.catch((e) => (n8nError = errorText(e)));
 	}
 	const RUN_TONE: Record<string, string> = {
@@ -220,24 +217,12 @@
 	<section class="card">
 		<div class="flex items-center justify-between border-b border-line/60 px-4 py-3">
 			<div>
-				<span class="font-bold">All n8n workflows</span>
+				<span class="font-bold">FLF n8n workflows</span>
 				{#if n8n}<span class="ml-2 text-xs text-ink-soft">
 						{n8n.filter((w) => w.active).length} active of {n8n.length} · read only
 					</span>{/if}
 			</div>
 			<div class="flex items-center gap-2">
-				<div class="flex rounded-lg border border-line/70 bg-white p-0.5">
-					{#each [[false, 'All'], [true, 'FLF']] as [value, label] (label)}
-						<button
-							class="rounded-md px-3 py-1 text-xs font-semibold {flfOnly === value
-								? 'bg-primary-600 text-white'
-								: 'text-ink-soft'}"
-							onclick={() => (flfOnly = value as boolean)}
-						>
-							{label}
-						</button>
-					{/each}
-				</div>
 				<button class="btn-ghost text-xs" onclick={loadN8n}>Refresh</button>
 			</div>
 		</div>
@@ -247,7 +232,7 @@
 			<p class="px-4 py-4 text-sm text-ink-soft">Reading n8n…</p>
 		{:else}
 			<ul class="divide-y divide-line/40">
-				{#each shown as w (w.id)}
+				{#each n8n as w (w.id)}
 					<li class="flex items-center gap-3 px-4 py-2 text-sm">
 						<span
 							class="h-2 w-2 shrink-0 rounded-full {w.active ? 'bg-success' : 'bg-line'}"
@@ -262,7 +247,6 @@
 							<span class="truncate">{w.name}</span>
 							<ExternalLink class="h-3 w-3 shrink-0 text-ink-soft" />
 						</a>
-						{#if w.flf}<span class="text-xs font-semibold text-primary-700">FLF</span>{/if}
 						<span class="w-20 shrink-0 text-xs text-ink-soft">
 							{w.active ? 'Active' : 'Inactive'}
 						</span>
@@ -272,7 +256,7 @@
 								></span>
 								{w.lastRun.status} · {formatDateTime(w.lastRun.at)}
 							{:else}
-								{w.flf ? 'No saved run' : 'None in the latest 250 runs'}
+								No saved run
 							{/if}
 						</span>
 						<span

@@ -447,20 +447,20 @@ export function registerTools(server: McpServer, caller: Caller): void {
 		{
 			title: 'List n8n workflows',
 			description:
-				'Every n8n workflow: active or not, latest run and its status, failures in the last 24 h, ' +
-				'and its link in n8n. FLF ones only unless flf_only=false. Read only: nothing in n8n runs or changes.',
-			inputSchema: z.object({ flf_only: z.boolean().default(true) }),
+				'FLF’s n8n workflows: active or not, latest run and its status, failures in the last 24 h, ' +
+				'and its link in n8n. Read only: nothing in n8n runs or changes.',
+			inputSchema: z.object({}),
 			annotations: read
 		},
 		run(
 			'flf_list_n8n_workflows',
-			(a) => (a.flf_only ? 'flf' : 'all'),
-			async (a) => {
+			() => 'flf',
+			async () => {
 				await need('automations.any.read');
 				const r = (await act('automations', 'n8n.workflows', {})) as {
-					workflows: { id: string; flf: boolean }[];
+					workflows: { id: string }[];
 				};
-				const rows = r.workflows.filter((w) => !a.flf_only || w.flf);
+				const rows = r.workflows;
 				await audit(
 					caller,
 					'flf_list_n8n_workflows',

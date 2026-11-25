@@ -54,9 +54,7 @@ export interface N8nWorkflow {
 	active: boolean;
 	updatedAt: string | null;
 	tags: string[];
-	/** Listed in the n8n connection's workflows, or named FLF/FFL. */
-	flf: boolean;
-	/** Latest run; null when none is among the instance's newest 250 runs (non-FLF workflows). */
+	/** Latest saved run; null when n8n kept none. */
 	lastRun: { at: string | null; status: string } | null;
 	errors24h: number;
 	lastErrorAt: string | null;
@@ -64,10 +62,10 @@ export interface N8nWorkflow {
 }
 
 /**
- * Every workflow of the n8n instance with its latest run and its failures of the last 24 h.
+ * FLF's workflows of the n8n instance (the instance also holds other companies' workflows, which
+ * the Hub never shows), with their latest run and their failures of the last 24 h.
  * Read only (GET /workflows and /executions): never runs, edits or publishes anything.
- * About four requests, plus one per FLF workflow for its own latest run (the instance's newest
- * 250 runs are only a few hours, since Calendar → Events runs every minute).
+ * About three requests, plus one per FLF workflow for its own latest run.
  */
 export async function n8nWorkflows(apiKey: string | undefined): Promise<N8nWorkflow[]> {
 	const settings = await settingsOf('n8n');
@@ -107,25 +105,21 @@ export async function n8nWorkflows(apiKey: string | undefined): Promise<N8nWorkf
 		tags?: { name: string }[];
 	};
 	type Ex = { workflowId: string; status?: string; startedAt?: string };
-	const [workflows, recent, errors] = await Promise.all([
+	const [all, errors] = await Promise.all([
 		page<Wf>('workflows', 1000),
-		page<Ex>('executions', 250),
 		page<Ex>('executions?status=error', 250)
 	]);
 	const last = new Map<string, Ex>();
-	for (const e of recent) {
-		const prev = last.get(e.workflowId);
-		if (!prev || (prev.startedAt ?? '') < (e.startedAt ?? '')) last.set(e.workflowId, e);
-	}
 	const since = new Date(Date.now() - 24 * 3600_000).toISOString();
 	const flfIds = new Set([
 		...pairs(settings.workflows).map((w) => w.id),
 		...N8N_AUTOMATIONS.map((a) => a.workflowId)
 	]);
 	const isFlf = (w: Wf) => flfIds.has(w.id) || /\b(FLF|FFL)\b/i.test(w.name);
-	// FLF workflows: their own latest run, whatever the rest of the instance did since.
+	const workflows = all.filter(isFlf);
+	// Each workflow's own latest run, whatever the rest of the instance did since.
 	await Promise.all(
-		workflows.filter(isFlf).map(async (w) => {
+		workflows.map(async (w) => {
 			const [run] = await page<Ex>(`executions?workflowId=${encodeURIComponent(w.id)}`, 1);
 			if (run) last.set(w.id, run);
 		})
@@ -140,7 +134,6 @@ export async function n8nWorkflows(apiKey: string | undefined): Promise<N8nWorkf
 				active: w.active,
 				updatedAt: w.updatedAt ?? null,
 				tags: (w.tags ?? []).map((t) => t.name),
-				flf: isFlf(w),
 				lastRun: run ? { at: run.startedAt ?? null, status: run.status ?? 'unknown' } : null,
 				errors24h: mine.filter((e) => (e.startedAt ?? '') >= since).length,
 				lastErrorAt:
