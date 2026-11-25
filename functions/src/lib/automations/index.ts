@@ -156,6 +156,12 @@ export async function meetingSuggestions(meetings: NewMeeting[]) {
 				// Fellows only: the calendar meetings are with the portal's CRM people.
 				if (!c || c.type !== 'fellow' || !MEETING_STAGES.includes(c.stage) || !assigneeOf(c))
 					return null;
+				// One open suggestion per contact: a renamed or re-dated meeting is not a new one.
+				const open = await crm.tasks
+					.where('contactId', '==', m.contactId)
+					.where('done', '==', false)
+					.get();
+				if (open.docs.some((t) => t.data().automationId === 'meeting-next-stage')) return null;
 				const stage = stageOf(c.type, c.stage)?.label ?? c.stage;
 				const day = m.date!.toISOString().slice(0, 10);
 				const title = `Met on ${day} (“${m.title}”): move from ${stage} to the next stage?`;
