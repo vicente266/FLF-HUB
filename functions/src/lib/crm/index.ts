@@ -398,6 +398,13 @@ export const actions = {
 
 	'contact.delete': async (p: any) => {
 		const id = str(p.id, 'id');
+		// The portal sheet is their source: deleted here, the next import would bring them back.
+		const stored = (await contacts.doc(id).get()).data() as Contact | undefined;
+		if (stored?.source === 'portal')
+			throw new HttpsError(
+				'failed-precondition',
+				'This contact comes from the portal sheet: remove the row there and it leaves the Hub at the next import. Until then you can mark it Lost.'
+			);
 		await db.recursiveDelete(contacts.doc(id));
 		const open = await tasks.where('contactId', '==', id).get();
 		const batch = db.batch();

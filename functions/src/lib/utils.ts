@@ -4,15 +4,24 @@ import * as user from './user';
 import { callContext } from './call-context';
 
 /**
- * Admins pass every check; everyone else needs the permission through one of their groups. Inside a
- * connector call, the role and permissions it already read are used instead of reading them again.
+ * Health and money data are need-to-know: being an admin doesn't open them, only a group that
+ * grants the permission does.
+ */
+export const NO_ADMIN_BYPASS = ['wellbeing.any.read', 'wealth.any.read'];
+
+/**
+ * Admins pass every other check; everyone else needs the permission through one of their groups.
+ * The admin bypass checks the user doc, not only the token, so a demoted admin loses it at once.
+ * Inside a connector call, the role and permissions it already read are used instead.
  */
 export const hasPermission = async (auth: any, permission: string): Promise<boolean> => {
+	const bypass = !NO_ADMIN_BYPASS.includes(permission);
 	const ctx = callContext();
 	if (ctx && ctx.uid === auth?.uid) {
-		return ctx.role === 'admin' || ctx.permissions.includes(permission);
+		return (bypass && ctx.role === 'admin') || ctx.permissions.includes(permission);
 	}
-	if (auth?.token?.role === 'admin') return true;
+	if (bypass && auth?.token?.role === 'admin' && (await user.roleOf(auth.uid)) === 'admin')
+		return true;
 	return user.hasPermission(auth.uid, permission);
 };
 

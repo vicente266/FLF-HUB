@@ -72,11 +72,12 @@
 		{ label: 'No due date', rows: tasks.filter((t) => due(t) === null), tone: 'text-ink-soft' }
 	]);
 
-	async function done(id: string) {
+	async function done(id: string, box: HTMLInputElement) {
 		try {
 			await callAction('crm:task.done', { id, done: true });
 		} catch (e) {
 			error = errorText(e);
+			box.checked = false;
 		}
 	}
 </script>
@@ -118,7 +119,8 @@
 								type="checkbox"
 								class="rounded text-primary-600"
 								disabled={!canWrite}
-								onchange={() => done(t.id)}
+								checked={false}
+								onchange={(e) => done(t.id, e.currentTarget)}
 							/>
 							<div class="min-w-0 flex-1">
 								<div class="font-medium">{t.title}</div>

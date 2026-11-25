@@ -273,6 +273,24 @@
 					"order": "ASCENDING"
 				}
 			]
+		},
+		{
+			"collectionGroup": "contact",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "open",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "needsAttention",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "createdAt",
+					"order": "DESCENDING"
+				}
+			]
 		}
 	],
 	"fieldOverrides": []

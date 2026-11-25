@@ -1,6 +1,7 @@
 import { HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
 import * as utils from './lib/utils';
 import { callContext } from './lib/call-context';
+import * as user from './lib/user';
 
 /** One routable action of a feature dispatcher. */
 export interface Action {
@@ -43,6 +44,13 @@ export async function runAction(
 }
 
 /** The role the gate checks: the connector's, read from the user doc, else the token claim. */
+/** The stored role (inside a connector call, the one it already read). */
+async function userRole(auth: any): Promise<string | null> {
+	const ctx = callContext();
+	if (ctx && ctx.uid === auth?.uid) return ctx.role;
+	return auth?.uid ? user.roleOf(auth.uid) : null;
+}
+
 function roleOf(auth: any): string | undefined {
 	const ctx = callContext();
 	return ctx && ctx.uid === auth?.uid ? ctx.role : auth?.token?.role;
@@ -66,7 +74,8 @@ async function execute(
 		);
 	}
 	if (!auth?.uid) throw new HttpsError('unauthenticated', 'Your session has ended. Sign in again.');
-	if (action.adminOnly && roleOf(auth) !== 'admin') {
+	// The user doc, not only the token: a demoted admin's token says admin for up to an hour.
+	if (action.adminOnly && (roleOf(auth) !== 'admin' || (await userRole(auth)) !== 'admin')) {
 		throw new HttpsError('permission-denied', action.denied ?? 'Only admins can do this.');
 	}
 	if (action.permission && !(await utils.hasPermission(auth, action.permission))) {

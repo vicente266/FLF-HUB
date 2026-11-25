@@ -4,7 +4,7 @@ import { readFileSync } from 'fs';
 import { db } from '../../firestore';
 import { useEmulator } from '../../env';
 import { serverTimestamp, str, createLogger } from '../utils';
-import { CATEGORIES, CONNECTORS, connector } from './config';
+import { CATEGORIES, CONNECTORS, N8N_BASE_URL, connector } from './config';
 import { CONNECTION_COLLECTION, CONNECTOR_URL } from '../mcp/config';
 import { N8N_AUTOMATIONS } from '../automations/config';
 
@@ -40,7 +40,8 @@ function pairs(value: string | undefined) {
 
 /** GET with a timeout; never anything but GET. */
 async function get(url: string, headers: Record<string, string> = {}, ms = 15_000) {
-	return fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(ms) });
+	// A redirect could carry a key's header to another host: refuse it.
+	return fetch(url, { method: 'GET', headers, redirect: 'error', signal: AbortSignal.timeout(ms) });
 }
 
 async function settingsOf(id: string): Promise<Record<string, string>> {
@@ -65,16 +66,16 @@ export interface N8nWorkflow {
  * FLF's workflows of the n8n instance (the instance also holds other companies' workflows, which
  * the Hub never shows), with their latest run and their failures of the last 24 h.
  * Read only (GET /workflows and /executions): never runs, edits or publishes anything.
- * About three requests, plus one per FLF workflow for its own latest run.
+ * One request for the workflows, plus two per FLF workflow (its latest run and its failures).
  */
 export async function n8nWorkflows(apiKey: string | undefined): Promise<N8nWorkflow[]> {
 	const settings = await settingsOf('n8n');
-	if (!apiKey || !settings.baseUrl)
+	if (!apiKey)
 		throw new HttpsError(
 			'failed-precondition',
 			'Set up the n8n connection first (Connections → n8n workflows).'
 		);
-	const base = settings.baseUrl.replace(/\/+$/, '');
+	const base = N8N_BASE_URL;
 	const headers = { 'X-N8N-API-KEY': apiKey, Accept: 'application/json' };
 	const page = async <T>(path: string, max: number): Promise<T[]> => {
 		const out: T[] = [];
@@ -105,11 +106,10 @@ export async function n8nWorkflows(apiKey: string | undefined): Promise<N8nWorkf
 		tags?: { name: string }[];
 	};
 	type Ex = { workflowId: string; status?: string; startedAt?: string };
-	const [all, errors] = await Promise.all([
-		page<Wf>('workflows', 1000),
-		page<Ex>('executions?status=error', 250)
-	]);
+	const all = await page<Wf>('workflows', 1000);
 	const last = new Map<string, Ex>();
+	// Each FLF workflow's own failures: the instance's newest errors are mostly other companies'.
+	const errorsOf = new Map<string, Ex[]>();
 	const since = new Date(Date.now() - 24 * 3600_000).toISOString();
 	const flfIds = new Set([
 		...pairs(settings.workflows).map((w) => w.id),
@@ -120,13 +120,18 @@ export async function n8nWorkflows(apiKey: string | undefined): Promise<N8nWorkf
 	// Each workflow's own latest run, whatever the rest of the instance did since.
 	await Promise.all(
 		workflows.map(async (w) => {
-			const [run] = await page<Ex>(`executions?workflowId=${encodeURIComponent(w.id)}`, 1);
+			const id = encodeURIComponent(w.id);
+			const [[run], failed] = await Promise.all([
+				page<Ex>(`executions?workflowId=${id}`, 1),
+				page<Ex>(`executions?workflowId=${id}&status=error`, 50)
+			]);
 			if (run) last.set(w.id, run);
+			errorsOf.set(w.id, failed);
 		})
 	);
 	return workflows
 		.map((w) => {
-			const mine = errors.filter((e) => e.workflowId === w.id);
+			const mine = errorsOf.get(w.id) ?? [];
 			const run = last.get(w.id);
 			return {
 				id: w.id,
@@ -214,20 +219,21 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 			}
 			case 'n8n': {
 				const list = pairs(settings.workflows);
-				if (!secrets.n8nApiKey || !settings.baseUrl || !list.length) {
+				if (!secrets.n8nApiKey || !list.length) {
 					return {
 						status: 'not_configured',
-						detail: 'Needs the n8n address, the workflows and an API key (developer).'
+						detail: 'Needs the workflows and an API key (developer).'
 					};
 				}
-				const base = settings.baseUrl.replace(/\/+$/, '');
+				const base = N8N_BASE_URL;
 				const since = Date.now() - 24 * 3600_000;
 				const lines: string[] = [];
 				let failed = false;
 				for (const w of list) {
 					// Read only: the executions list. Never /run, /activate or a webhook.
+					// Only its failures, so a busy workflow's successful runs can't push them out of the page.
 					const res = await get(
-						`${base}/api/v1/executions?workflowId=${encodeURIComponent(w.id)}&limit=20`,
+						`${base}/api/v1/executions?workflowId=${encodeURIComponent(w.id)}&status=error&limit=50`,
 						{ 'X-N8N-API-KEY': secrets.n8nApiKey, Accept: 'application/json' }
 					);
 					if (!res.ok) {
@@ -238,11 +244,8 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 					const runs =
 						((await res.json()) as { data?: { status?: string; startedAt?: string }[] }).data ?? [];
 					const recent = runs.filter((r) => Date.parse(r.startedAt ?? '') >= since);
-					const errors = recent.filter(
-						(r) => r.status === 'error' || r.status === 'crashed'
-					).length;
+					const errors = recent.length;
 					if (errors) failed = true;
-					// Some workflows don't save successful runs (FFL Google Sheets), so only failures count.
 					lines.push(`${w.name}: ${errors} failed in 24 h`);
 				}
 				return { status: failed ? 'error' : 'ok', detail: lines.join(' · ') };

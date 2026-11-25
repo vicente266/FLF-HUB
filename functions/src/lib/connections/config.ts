@@ -42,6 +42,12 @@ export const CATEGORIES: Record<Category, string> = {
 	ai: 'AI'
 };
 
+/**
+ * FLF's n8n instance. Fixed in code, not a setting: the n8n API key has full access to production,
+ * so it is only ever sent here.
+ */
+export const N8N_BASE_URL = 'https://vv1.app.n8n.cloud';
+
 export const CONNECTORS: Connector[] = [
 	{
 		id: 'portal-sheet',
@@ -102,12 +108,6 @@ export const CONNECTORS: Connector[] = [
 		secrets: ['N8N_API_KEY'],
 		settings: [
 			{
-				key: 'baseUrl',
-				label: 'n8n address',
-				help: 'e.g. https://vv1.app.n8n.cloud',
-				kind: 'text'
-			},
-			{
 				key: 'workflows',
 				label: 'Workflows',
 				help: 'One per line: `Name | workflow id`, e.g. `FFL Google Sheets | H8nD4J21jpY18yLj`.',
@@ -116,7 +116,7 @@ export const CONNECTORS: Connector[] = [
 		],
 		setup: [
 			'n8n → Settings → n8n API: create an API key (n8n has no read-only key: keep it in Secret Manager only). Developer only: `firebase functions:secrets:set N8N_API_KEY`, deploy.',
-			'Fill in the address and the workflows, then press Test.'
+			`Fill in the workflows, then press Test. The n8n address is fixed (${N8N_BASE_URL}), so the key can't be sent anywhere else.`
 		],
 		testable: true
 	},

@@ -73,7 +73,14 @@ async function addTask(
 		contactId,
 		contactName: crm.displayName(c),
 		title,
-		dueAt: Timestamp.fromMillis(Date.now() + days * DAY),
+		// The end of that day in Madrid, as for a task added by hand.
+		dueAt: Timestamp.fromDate(
+			crm.endOfDay(
+				new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(
+					new Date(Date.now() + days * DAY)
+				)
+			)
+		),
 		assigneeUid: assigneeOf(c),
 		done: false,
 		source: 'automation',
@@ -95,10 +102,13 @@ export async function onStageChanged(id: string, c: crm.Contact) {
 	const now = (await crm.contacts.doc(id).get()).data() as crm.Contact | undefined;
 	if (!now || now.stage !== c.stage) return;
 	// The old stage's tasks close whether or not the follow-up automation is on.
+	// A final stage (Fellow, Lost…) also ends the next-step chase.
+	const final = !!stageOf(now.type as ContactType, now.stage)?.final;
 	const closed = await crm.closeAutomationTasks(id, [
 		'stage-follow-up',
 		'meeting-next-stage',
-		'stale-contacts'
+		'stale-contacts',
+		...(final ? ['next-step-task'] : [])
 	]);
 	await run(
 		'stage-follow-up',
@@ -207,7 +217,8 @@ export async function knowledgeSync() {
 	await run('knowledge-sync', async () => {
 		const knowledge = await import('../knowledge/index.js');
 		const r = await knowledge.importFolder();
-		if (!r.added && !r.updated && !r.removed) return null; // nothing changed: not a run
+		// Recorded on a quiet night too, so Health can tell a stopped schedule from a quiet one.
+		if (!r.added && !r.updated && !r.removed) return `${r.imported} documents, nothing changed`;
 		return `${r.imported} documents (${r.added} new, ${r.updated} updated, ${r.removed} removed)`;
 	});
 }

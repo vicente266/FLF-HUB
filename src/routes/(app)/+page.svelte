@@ -44,6 +44,8 @@
 			listen<Contact>(
 				query(
 					collection(db, 'contact'),
+					// Open ones only, as the KPI counts (a Fellow or Lost contact needs no chasing).
+					where('open', '==', true),
 					where('needsAttention', '==', true),
 					orderBy('createdAt', 'desc'),
 					limit(10)

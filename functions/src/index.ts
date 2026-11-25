@@ -83,12 +83,17 @@ export const coreAction = onCall(
 		'user.update': {
 			adminOnly: true,
 			handler: async (p) => {
-				await user.updateAccess(
-					utils.str(p.uid, 'uid'),
-					utils.oneOf(p.role, ['guest', 'user', 'admin'] as const, 'role'),
+				const uid = utils.str(p.uid, 'uid');
+				const role = utils.oneOf(p.role, ['guest', 'user', 'admin'] as const, 'role');
+				const { before } = await user.updateAccess(
+					uid,
+					role,
 					Array.isArray(p.groups) ? p.groups.map(String) : [],
 					p.sherpa === true
 				);
+				// Less access: their Claude connections end now, not at their next call.
+				const rank = { guest: 0, user: 1, admin: 2 } as const;
+				if (before && rank[role] < rank[before]) await claude.connections.revokePerson(uid);
 				return { ok: true };
 			}
 		},

@@ -1,3 +1,4 @@
+import admin from 'firebase-admin';
 import { db } from '../firestore';
 import * as group from './group';
 import { serverTimestamp } from './utils';
@@ -31,8 +32,14 @@ export async function getOrCreate(auth: any): Promise<User> {
 
 	const email = String(auth.token.email ?? '').toLowerCase();
 	const domain = email.split('@')[1] ?? '';
-	const role: UserRole =
-		auth.token.role === 'admin' ? 'admin' : TEAM_DOMAINS.includes(domain) ? 'user' : 'guest';
+	// The team's domain counts only for a Google sign-in whose email Google has verified.
+	const provenTeam =
+		TEAM_DOMAINS.includes(domain) &&
+		auth.token.email_verified === true &&
+		auth.token.firebase?.sign_in_provider === 'google.com';
+	let role: UserRole = 'guest';
+	if (auth.token.role === 'admin') role = 'admin';
+	else if (provenTeam) role = 'user';
 
 	const def = await group.collection.where('name', '==', group.DEFAULT_NAME).limit(1).get();
 	const data = {
@@ -56,6 +63,12 @@ export async function permissionsOf(groups: string[]): Promise<string[]> {
 	return [...new Set(docs.flatMap((d) => (d.data()?.permissions as string[]) ?? []))];
 }
 
+/** The role stored on the user doc (the token's claim can be up to an hour old). */
+export async function roleOf(uid: string): Promise<UserRole | null> {
+	const data = (await collection.doc(uid).get()).data() as User | undefined;
+	return data?.role ?? null;
+}
+
 export async function hasPermission(uid: string, permission: string): Promise<boolean> {
 	const doc = await collection.doc(uid).get();
 	const data = doc.data() as User | undefined;
@@ -69,6 +82,10 @@ export async function updateAccess(
 	role: UserRole,
 	groups: string[],
 	sherpa: boolean
-): Promise<void> {
+): Promise<{ before: UserRole | null }> {
+	const before = await roleOf(uid);
 	await collection.doc(uid).update({ role, groups, sherpa, updatedAt: serverTimestamp() });
+	// The claim now, not only through the syncUserRole trigger.
+	await admin.auth().setCustomUserClaims(uid, { role });
+	return { before };
 }

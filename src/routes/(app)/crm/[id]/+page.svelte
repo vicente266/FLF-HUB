@@ -62,16 +62,21 @@
 	// Restricted data: fetched through their own actions, only for those who may see it.
 	$effect(() => {
 		const cid = id;
+		// A slower answer for the previous contact must not land on this one.
+		let alive = true;
 		perma = null;
 		money = null;
 		if (canWellbeing)
 			callAction<Perma[]>('portal:wellbeing.get', { contactId: cid })
-				.then((r) => (perma = r))
+				.then((r) => alive && (perma = r))
 				.catch(() => {});
 		if (canWealth)
 			callAction<Finance | null>('portal:finance.get', { contactId: cid })
-				.then((r) => (money = r))
+				.then((r) => alive && (money = r))
 				.catch(() => {});
+		return () => {
+			alive = false;
+		};
 	});
 
 	let id = $derived(page.params.id ?? '');
@@ -260,7 +265,7 @@
 							{#if canWrite}<button class="btn-ghost" onclick={openEdit}>
 									<Pencil class="h-4 w-4" /> Edit
 								</button>{/if}
-							{#if canDelete}<button
+							{#if canDelete && c.source !== 'portal'}<button
 									class="btn-ghost text-danger"
 									onclick={remove}
 									title="Delete contact"
@@ -391,7 +396,12 @@
 						class="input"
 						disabled={!canWrite}
 						value={c.ownerUid ?? ''}
-						onchange={(e) => act('crm:contact.assign', { id, ownerUid: e.currentTarget.value })}
+						onchange={async (e) => {
+							const el = e.currentTarget;
+							// Refused: show the saved owner again.
+							if (!(await act('crm:contact.assign', { id, ownerUid: el.value })))
+								el.value = c.ownerUid ?? '';
+						}}
 					>
 						<option value="">No owner</option>
 						{#each team as u (u.id)}<option value={u.id}>
@@ -473,8 +483,11 @@
 									class="mt-0.5 rounded text-primary-600"
 									checked={t.done}
 									disabled={!canWrite}
-									onchange={(e) =>
-										act('crm:task.done', { id: t.id, done: e.currentTarget.checked })}
+									onchange={async (e) => {
+										const el = e.currentTarget;
+										if (!(await act('crm:task.done', { id: t.id, done: el.checked })))
+											el.checked = !el.checked;
+									}}
 								/>
 								<div class="min-w-0 flex-1 {t.done ? 'text-ink-soft line-through' : ''}">
 									<div>{t.title}</div>

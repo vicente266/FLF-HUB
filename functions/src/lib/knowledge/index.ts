@@ -444,7 +444,7 @@ async function textOf(f: DriveFile): Promise<string> {
  */
 export async function importFolder() {
 	const { folderId: id, files, complete, unshared } = await listFolder();
-	const readable = files.filter((f) => READABLE.includes(f.mimeType));
+	const importable = files.filter((f) => READABLE.includes(f.mimeType));
 	const where = (f: DriveFile) => [...f.path, f.name].join(' / ');
 	const skipped = [
 		...files.filter((f) => !READABLE.includes(f.mimeType)).map(where),
@@ -469,6 +469,13 @@ export async function importFolder() {
 	const existing = new Map(
 		all.filter((d) => d.data().source === 'drive').map((d) => [d.id, d.data()])
 	);
+	// Knowledge holds MAX_ENTRIES in all: imported documents take what the Hub's own entries leave.
+	const room = Math.max(0, MAX_ENTRIES - (all.length - existing.size));
+	const readable = importable.slice(0, room);
+	if (importable.length > room)
+		skipped.push(
+			`${importable.length - room} documents over the ${MAX_ENTRIES}-entry limit (not imported)`
+		);
 	let added = 0;
 	let updated = 0;
 	for (const f of readable) {
@@ -535,8 +542,10 @@ export async function importFolder() {
 		}
 	}
 	// What's left was deleted from (or moved out of) the folder; only after a whole listing.
-	if (complete) for (const docId of existing.keys()) await collection.doc(docId).delete();
-	const removed = complete ? existing.size : 0;
+	// Not after a capped import either: the documents left out are still in the folder.
+	const whole = complete && importable.length <= room;
+	if (whole) for (const docId of existing.keys()) await collection.doc(docId).delete();
+	const removed = whole ? existing.size : 0;
 	await db
 		.collection('connection')
 		.doc('knowledge-folder')

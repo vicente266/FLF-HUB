@@ -1377,8 +1377,8 @@ export function registerTools(server: McpServer, caller: Caller): void {
 		{
 			title: 'Save connection settings',
 			description:
-				'Set a connection’s non-secret settings (keys in flf_list_connections, e.g. n8n "baseUrl" ' +
-				'and "workflows": one "Name | workflow id" per line; portal-sheet "spreadsheetId"). ' +
+				'Set a connection’s non-secret settings (keys in flf_list_connections, e.g. n8n ' +
+				'"workflows": one "Name | workflow id" per line; portal-sheet "spreadsheetId"). ' +
 				'Replaces all its settings. Never put a token or key here: secrets go in Secret Manager.',
 			inputSchema: z.object({
 				connection_id: ID,

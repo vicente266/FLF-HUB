@@ -7,15 +7,19 @@ import {
 } from 'firebase/firestore';
 import { me, pageTitle } from '$lib/stores';
 
+/** Need-to-know: admins see these only through a group that grants them (as the backend checks). */
+const NO_ADMIN_BYPASS = ['wellbeing.any.read', 'wealth.any.read'];
+
 /**
  * Whether the signed-in user has a permission. `'a | b'` = any, `'a & b'` = all.
- * Admins pass every check.
+ * Admins pass every check except health and money data.
  */
 export function hasPermission(expr: string): boolean {
 	const user = get(me);
 	if (!user) return false;
-	if (user.role === 'admin') return true;
-	const has = (p: string) => user.permissions.includes(p.trim());
+	const has = (p: string) =>
+		(user.role === 'admin' && !NO_ADMIN_BYPASS.includes(p.trim())) ||
+		user.permissions.includes(p.trim());
 	if (expr.includes('|')) return expr.split('|').some(has);
 	if (expr.includes('&')) return expr.split('&').every(has);
 	return has(expr);

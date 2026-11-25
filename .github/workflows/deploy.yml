@@ -18,9 +18,48 @@ permissions:
   contents: read
 
 jobs:
+  # What may deploy: main only, after a green CI of a push to this repository (never a fork's pull
+  # request, whose branch can also be called main). A manual run is main only and runs the gates.
+  gate:
+    name: Gate
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: CI already passed
+        if: github.event_name == 'workflow_run'
+        run: echo "CI passed for ${{ github.event.workflow_run.head_sha }}."
+      - uses: actions/checkout@v4
+        if: github.event_name == 'workflow_dispatch'
+      - uses: actions/setup-node@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+      - name: Lint, types and builds
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VITE_FIREBASE_API_KEY: ci
+          VITE_FIREBASE_AUTH_DOMAIN: ci.firebaseapp.com
+          VITE_FIREBASE_PROJECT_ID: demo-flf-hub
+          VITE_FIREBASE_STORAGE_BUCKET: ci
+          VITE_FIREBASE_MESSAGING_SENDER_ID: '0'
+          VITE_FIREBASE_APP_ID: ci
+        run: |
+          npm ci && npm ci --prefix functions
+          npm run lint && npm run check && npm run build && npm --prefix functions run build
+
   backend:
     name: Firebase (functions, rules, indexes)
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    needs: gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -51,7 +90,10 @@ jobs:
 
   web:
     name: Web app (Hostinger)
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # After the backend, so a new page never goes live calling actions not deployed yet; not at all
+    # when the backend deploy failed (skipped while it isn't set up is fine).
+    needs: [gate, backend]
+    if: always() && needs.gate.result == 'success' && needs.backend.result != 'failure'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
