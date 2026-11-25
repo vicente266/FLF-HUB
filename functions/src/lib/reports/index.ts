@@ -36,25 +36,27 @@ export async function summary() {
 		}))
 	);
 
+	return { funnel, sources, kpis: await kpis() };
+}
+
+/** The four headline numbers (Home shows only these): four count aggregations. */
+export async function kpis() {
+	const since30 = Timestamp.fromMillis(Date.now() - 30 * DAY);
 	const [newLast30, needsAttention, openTasks, overdue] = await Promise.all([
 		crm.contacts.where('createdAt', '>=', since30).count().get(),
 		crm.contacts.where('open', '==', true).where('needsAttention', '==', true).count().get(),
 		crm.tasks.where('done', '==', false).count().get(),
 		crm.tasks.where('done', '==', false).where('dueAt', '<', Timestamp.now()).count().get()
 	]);
-
 	return {
-		funnel,
-		sources,
-		kpis: {
-			newLast30: newLast30.data().count,
-			needsAttention: needsAttention.data().count,
-			openTasks: openTasks.data().count,
-			overdueTasks: overdue.data().count
-		}
+		newLast30: newLast30.data().count,
+		needsAttention: needsAttention.data().count,
+		openTasks: openTasks.data().count,
+		overdueTasks: overdue.data().count
 	};
 }
 
 export const actions = {
-	summary: async () => summary()
+	summary: async () => summary(),
+	kpis: async () => ({ kpis: await kpis() })
 };

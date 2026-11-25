@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { collection, query, where, orderBy, limit } from 'firebase/firestore';
+	import { collection, query, where, orderBy, limit, getCountFromServer } from 'firebase/firestore';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { db } from '$lib/firebase';
 	import { callAction } from '$lib/actions';
@@ -18,6 +18,7 @@
 	}
 
 	let tasks = $state<Task[]>([]);
+	let undated = $state(0);
 	let attention = $state<Contact[]>([]);
 	let summary = $state<Summary | null>(null);
 	let health = $state<Health | null>(null);
@@ -26,16 +27,22 @@
 
 	onMount(() => {
 		if (hasPermission('reports.any.read'))
-			callAction<Summary>('reports:summary').then((s) => (summary = s));
+			callAction<Summary>('reports:kpis').then((s) => (summary = s));
 		if (hasPermission('health.any.read'))
 			callAction<Health>('connections:health.get').then((h) => (health = h));
 		if (!canCrm || !$me) return;
+		const mine = [where('assigneeUid', '==', $me.uid), where('done', '==', false)];
+		// Undated tasks (mostly from the portal sheet) are counted apart, so they can't push the
+		// overdue ones out of the list.
+		getCountFromServer(query(collection(db, 'task'), ...mine, where('dueAt', '==', null)))
+			.then((r) => (undated = r.data().count))
+			.catch(() => {});
 		const unsubs = [
 			listen<Task>(
 				query(
 					collection(db, 'task'),
-					where('assigneeUid', '==', $me.uid),
-					where('done', '==', false),
+					...mine,
+					where('dueAt', '!=', null),
 					orderBy('dueAt'),
 					limit(20)
 				),
@@ -94,8 +101,10 @@
 					All tasks
 				</a>
 			</div>
-			{#if tasks.length === 0}
+			{#if tasks.length === 0 && !undated}
 				<p class="px-4 py-6 text-sm text-ink-soft">No open tasks. Nice.</p>
+			{:else if tasks.length === 0}
+				<p class="px-4 py-6 text-sm text-ink-soft">No dated tasks.</p>
 			{:else}
 				<ul class="divide-y divide-line/40">
 					{#each tasks as t (t.id)}
@@ -120,6 +129,14 @@
 						</li>
 					{/each}
 				</ul>
+			{/if}
+			{#if undated}
+				<a
+					href="/tasks"
+					class="block border-t border-line/40 px-4 py-2 text-xs font-semibold text-primary-700 hover:underline"
+				>
+					+ {undated} with no due date
+				</a>
 			{/if}
 		</section>
 

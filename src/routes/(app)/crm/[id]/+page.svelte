@@ -83,6 +83,8 @@
 	let contact = $state<Contact | null | undefined>(undefined);
 	let activity = $state<Activity[]>([]);
 	let tasks = $state<Task[]>([]);
+	let closedTasks = $state<Task[]>([]);
+	let showClosed = $state(false);
 	let team = $state<TeamUser[]>([]);
 	let error = $state<string | null>(null);
 	let profileOpen = $state(false);
@@ -110,8 +112,25 @@
 				(rows) => (activity = rows)
 			),
 			listen<Task>(
-				query(collection(db, 'task'), where('contactId', '==', cid), orderBy('dueAt'), limit(50)),
+				query(
+					collection(db, 'task'),
+					where('contactId', '==', cid),
+					where('done', '==', false),
+					orderBy('dueAt'),
+					limit(50)
+				),
 				(rows) => (tasks = rows)
+			),
+			// Closed ones apart, newest first, so open tasks are never cut off behind them.
+			listen<Task>(
+				query(
+					collection(db, 'task'),
+					where('contactId', '==', cid),
+					where('done', '==', true),
+					orderBy('dueAt', 'desc'),
+					limit(20)
+				),
+				(rows) => (closedTasks = rows)
 			),
 			listen<TeamUser>(
 				query(collection(db, 'user'), where('role', 'in', ['user', 'admin']), limit(200)),
@@ -477,32 +496,27 @@
 					<div class="border-b border-line/60 px-4 py-3 font-bold">Tasks</div>
 					<ul class="divide-y divide-line/40">
 						{#each tasks as t (t.id)}
-							<li class="flex items-start gap-2 px-4 py-2 text-sm">
-								<input
-									type="checkbox"
-									class="mt-0.5 rounded text-primary-600"
-									checked={t.done}
-									disabled={!canWrite}
-									onchange={async (e) => {
-										const el = e.currentTarget;
-										if (!(await act('crm:task.done', { id: t.id, done: el.checked })))
-											el.checked = !el.checked;
-									}}
-								/>
-								<div class="min-w-0 flex-1 {t.done ? 'text-ink-soft line-through' : ''}">
-									<div>{t.title}</div>
-									<div
-										class="text-xs {!t.done && (toDate(t.dueAt)?.getTime() ?? 0) < Date.now()
-											? 'text-danger'
-											: 'text-ink-soft'}"
-									>
-										Due {formatDate(t.dueAt)}{t.source === 'automation' ? ' · automation' : ''}
-									</div>
-								</div>
-							</li>
+							{@render taskRow(t)}
 						{:else}
-							<li class="px-4 py-3 text-sm text-ink-soft">No tasks for this contact yet.</li>
+							<li class="px-4 py-3 text-sm text-ink-soft">No open tasks for this contact.</li>
 						{/each}
+						{#if closedTasks.length}
+							<li>
+								<button
+									type="button"
+									class="w-full px-4 py-2 text-left text-xs font-semibold text-ink-soft hover:bg-canvas"
+									onclick={() => (showClosed = !showClosed)}
+								>
+									{showClosed ? 'Hide' : 'Show'}
+									{closedTasks.length}{closedTasks.length === 20 ? '+' : ''} closed
+								</button>
+							</li>
+							{#if showClosed}
+								{#each closedTasks as t (t.id)}
+									{@render taskRow(t)}
+								{/each}
+							{/if}
+						{/if}
 					</ul>
 					{#if canWrite}
 						<div class="space-y-2 border-t border-line/60 px-4 py-3">
@@ -534,3 +548,37 @@
 {/if}
 
 {#if contact}<FellowProfile bind:open={profileOpen} {contact} />{/if}
+
+{#snippet taskRow(t: Task)}
+	<li class="flex items-start gap-2 px-4 py-2 text-sm">
+		<input
+			type="checkbox"
+			class="mt-0.5 rounded text-primary-600"
+			checked={t.done}
+			disabled={!canWrite}
+			onchange={async (e) => {
+				const el = e.currentTarget;
+				if (!(await act('crm:task.done', { id: t.id, done: el.checked }))) el.checked = !el.checked;
+			}}
+		/>
+		<div class="min-w-0 flex-1">
+			<div class={t.done ? 'text-ink-soft line-through' : ''}>
+				<div>{t.title}</div>
+				<div
+					class="text-xs {!t.done && (toDate(t.dueAt)?.getTime() ?? Infinity) < Date.now()
+						? 'text-danger'
+						: 'text-ink-soft'}"
+				>
+					{t.dueAt ? `Due ${formatDate(t.dueAt)}` : 'No due date'}{t.source === 'automation'
+						? ' · automation'
+						: ''}
+				</div>
+			</div>
+			{#if t.superseded}
+				<div class="text-xs text-ink-soft">Closed: the contact moved on</div>
+			{:else if t.removedFromSheet}
+				<div class="text-xs text-ink-soft">Closed: removed from the sheet</div>
+			{/if}
+		</div>
+	</li>
+{/snippet}

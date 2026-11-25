@@ -10,10 +10,13 @@
 	let events = $state<CalendarEvent[]>([]);
 	let loading = $state(true);
 	let search = $state('');
+	// The newest meetings first; older ones load on request (search covers what is loaded).
+	const PAGE = 300;
+	let shown = $state(PAGE);
 
 	$effect(() =>
 		listen<CalendarEvent>(
-			query(collection(db, 'event'), orderBy('date', 'desc'), limit(300)),
+			query(collection(db, 'event'), orderBy('date', 'desc'), limit(shown)),
 			(rows) => {
 				events = rows;
 				loading = false;
@@ -97,4 +100,10 @@
 			</ul>
 		</section>
 	{/each}
+	{#if events.length === shown}
+		<div class="flex items-center justify-center gap-3 text-xs text-ink-soft">
+			Showing and searching the latest {shown} meetings.
+			<button class="btn-ghost text-xs" onclick={() => (shown += PAGE)}>Load older meetings</button>
+		</div>
+	{/if}
 </div>

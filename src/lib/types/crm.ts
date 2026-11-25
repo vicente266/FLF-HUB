@@ -113,7 +113,10 @@ export interface Task {
 	assigneeUid: string | null;
 	/** Which automation made it; closed automatically when the contact moves on. */
 	automationId?: string;
+	/** Closed because the contact moved on, not because someone did it. */
 	superseded?: boolean;
+	/** A portal task whose row left the sheet. */
+	removedFromSheet?: boolean;
 	done: boolean;
 	source: 'automation' | 'manual' | 'claude' | 'portal';
 }

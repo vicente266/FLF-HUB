@@ -213,7 +213,9 @@ export const reportsAction = onCall(
 	{ timeoutSeconds: 120 },
 	dispatch('reports', {
 		/** Pipeline funnel, sources and KPIs from the CRM. */
-		summary: { permission: 'reports.any.read', handler: reports.actions.summary }
+		summary: { permission: 'reports.any.read', handler: reports.actions.summary },
+		/** Just the four headline numbers, for Home. */
+		kpis: { permission: 'reports.any.read', handler: reports.actions.kpis }
 	})
 );
 

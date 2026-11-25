@@ -305,6 +305,42 @@
 					"order": "ASCENDING"
 				}
 			]
+		},
+		{
+			"collectionGroup": "task",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "contactId",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "done",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "dueAt",
+					"order": "ASCENDING"
+				}
+			]
+		},
+		{
+			"collectionGroup": "task",
+			"queryScope": "COLLECTION",
+			"fields": [
+				{
+					"fieldPath": "contactId",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "done",
+					"order": "ASCENDING"
+				},
+				{
+					"fieldPath": "dueAt",
+					"order": "DESCENDING"
+				}
+			]
 		}
 	],
 	"fieldOverrides": []
