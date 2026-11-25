@@ -57,7 +57,9 @@ entries are left out whatever their use.
 - Import (`core:knowledge.sync`, **Sync now** on the Knowledge page, `flf_sync_knowledge`, and the
   `knowledge-sync` automation every night at 03:00): each Google Doc, text or Markdown file becomes
   the entry `drive-<file id>` (title = file name, text up to 50,000 characters, link to the file).
-  Subfolders are read too, four levels deep; a new entry gets its top subfolder ("Legal") as a
+  Subfolders are read too, four levels deep, and shortcuts are followed to their folder or file (a
+  shortcut's target keeps its own sharing: one not shared with the service account is reported,
+  in the import and in Health); a new entry gets its top subfolder ("Legal") as a
   topic. A file's text is re-read only when it changed; a file removed from the folder takes its
   entry with it, but only after a whole listing (none when the listing stopped at the entry limit
   or the depth). Other file types (PDF, Sheets, Slides) are listed as not importable. Read only:

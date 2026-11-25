@@ -250,7 +250,12 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 			case 'knowledge-folder': {
 				// Lazy: knowledge is not needed by the other checks.
 				const knowledge = await import('../knowledge/index.js');
-				const { files } = await knowledge.listFolder();
+				const { files, unshared } = await knowledge.listFolder();
+				if (unshared.length)
+					return {
+						status: 'error',
+						detail: `Shortcuts to folders the Hub can't open (share them with 900685987021-compute@developer.gserviceaccount.com as Viewer): ${unshared.join(', ')}.`
+					};
 				const readable = files.filter((f) =>
 					[
 						'application/vnd.google-apps.document',

@@ -195,6 +195,7 @@ interface DriveFile {
 }
 
 const FOLDER = 'application/vnd.google-apps.folder';
+const SHORTCUT = 'application/vnd.google-apps.shortcut';
 /** How deep the import goes into subfolders (the Knowledge folder is level 0). */
 const MAX_DEPTH = 4;
 
@@ -216,6 +217,8 @@ export async function listFolder(): Promise<{
 	folderId: string;
 	files: DriveFile[];
 	complete: boolean;
+	/** Shortcuts to folders the Hub can't open (not shared with it), by path. */
+	unshared: string[];
 }> {
 	const id = await folderId();
 	const client = await drive();
@@ -243,36 +246,60 @@ export async function listFolder(): Promise<{
 	}
 	const files: DriveFile[] = [];
 	let complete = true;
-	const queue: { id: string; path: string[] }[] = [{ id, path: [] }];
+	const queue: { id: string; path: string[]; shortcut?: boolean }[] = [{ id, path: [] }];
+	const unshared: string[] = [];
+	// A shortcut can point back up the tree: each folder is walked once.
+	const seen = new Set([id]);
 	while (queue.length) {
 		const folder = queue.shift()!;
+		// A shortcut's target keeps its own sharing: a folder the Hub can't open lists as empty, so
+		// look at it first and report it rather than import nothing in silence.
+		if (folder.shortcut) {
+			try {
+				await client.request({
+					url: `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folder.id)}?fields=id&supportsAllDrives=true`
+				});
+			} catch {
+				unshared.push(folder.path.join(' / '));
+				complete = false;
+				continue;
+			}
+		}
 		let pageToken = '';
 		do {
 			const params = new URLSearchParams({
 				q: `'${folder.id.replace(/'/g, '')}' in parents and trashed = false`,
-				fields: 'nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink)',
+				fields:
+					'nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink, shortcutDetails)',
 				pageSize: '200',
 				supportsAllDrives: 'true',
 				includeItemsFromAllDrives: 'true',
 				...(pageToken ? { pageToken } : {})
 			});
 			const res = await client.request<{
-				files?: Omit<DriveFile, 'path'>[];
+				files?: (Omit<DriveFile, 'path'> & {
+					shortcutDetails?: { targetId: string; targetMimeType: string };
+				})[];
 				nextPageToken?: string;
 			}>({ url: `https://www.googleapis.com/drive/v3/files?${params}` });
-			for (const f of res.data.files ?? []) {
+			for (const raw of res.data.files ?? []) {
+				// A shortcut stands for its target: a folder to walk or a file to read.
+				const t = raw.mimeType === SHORTCUT ? raw.shortcutDetails : undefined;
+				const f = t ? { ...raw, id: t.targetId, mimeType: t.targetMimeType } : raw;
 				if (f.mimeType !== FOLDER) files.push({ ...f, path: folder.path });
-				else if (folder.path.length < MAX_DEPTH)
-					queue.push({ id: f.id, path: [...folder.path, f.name] });
-				else complete = false;
+				else if (seen.has(f.id)) continue;
+				else if (folder.path.length < MAX_DEPTH) {
+					seen.add(f.id);
+					queue.push({ id: f.id, path: [...folder.path, f.name], shortcut: !!t });
+				} else complete = false;
 			}
 			pageToken = res.data.nextPageToken ?? '';
 			if (files.length >= MAX_ENTRIES) {
-				return { folderId: id, files: files.slice(0, MAX_ENTRIES), complete: false };
+				return { folderId: id, files: files.slice(0, MAX_ENTRIES), complete: false, unshared };
 			}
 		} while (pageToken);
 	}
-	return { folderId: id, files, complete };
+	return { folderId: id, files, complete, unshared };
 }
 
 async function textOf(f: DriveFile): Promise<string> {
@@ -295,10 +322,16 @@ async function textOf(f: DriveFile): Promise<string> {
  * starts as `relevant`, since documents can be long. Never writes to Drive.
  */
 export async function importFolder() {
-	const { folderId: id, files, complete } = await listFolder();
+	const { folderId: id, files, complete, unshared } = await listFolder();
 	const readable = files.filter((f) => READABLE.includes(f.mimeType));
 	const where = (f: DriveFile) => [...f.path, f.name].join(' / ');
-	const skipped = files.filter((f) => !READABLE.includes(f.mimeType)).map(where);
+	const skipped = [
+		...files.filter((f) => !READABLE.includes(f.mimeType)).map(where),
+		...unshared.map(
+			(p) =>
+				`${p} (a shortcut to a folder not shared with 900685987021-compute@developer.gserviceaccount.com)`
+		)
+	];
 	const existing = new Map(
 		(await collection.where('source', '==', 'drive').get()).docs.map((d) => [d.id, d.data()])
 	);
@@ -309,7 +342,15 @@ export async function importFolder() {
 		const prev = existing.get(docId);
 		existing.delete(docId);
 		if (prev && prev.driveModifiedTime === f.modifiedTime && prev.label === f.name) continue;
-		const text = await textOf(f);
+		// A shortcut to a file not shared with the Hub can't be read: report it, import the rest.
+		let text: string;
+		try {
+			text = await textOf(f);
+		} catch {
+			// Kept if it was imported before (it was taken off the removal list above).
+			skipped.push(`${where(f)} (can't be read: not shared with the Hub)`);
+			continue;
+		}
 		const body = {
 			label: f.name.slice(0, MAX_LABEL),
 			description: text.slice(0, MAX_IMPORTED),
