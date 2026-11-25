@@ -215,13 +215,18 @@ export async function listFolder(): Promise<{ folderId: string; files: DriveFile
 			throw new HttpsError('failed-precondition', 'The Knowledge folder id is not a folder.');
 	} catch (err) {
 		if (err instanceof HttpsError) throw err;
-		const status = (err as { response?: { status?: number } }).response?.status;
-		throw new HttpsError(
-			'failed-precondition',
-			status === 404 || status === 403
-				? "The Hub can't see the Knowledge folder: share it with 900685987021-compute@developer.gserviceaccount.com as Viewer."
-				: `Drive answered ${status ?? 'with an error'} for the Knowledge folder.`
-		);
+		const res = (err as { response?: { status?: number; data?: unknown } }).response;
+		const status = res?.status;
+		// A 403 is either the folder not shared or the Drive API off in the project: tell them apart.
+		const body = JSON.stringify(res?.data ?? '');
+		let message: string;
+		if (status === 403 && /SERVICE_DISABLED|accessNotConfigured|has not been used/.test(body))
+			message =
+				'The Google Drive API is off in the Hub’s Google Cloud project: a developer enables it (APIs & Services → Google Drive API → Enable).';
+		else if (status === 404 || status === 403)
+			message = `The Hub can't see the Knowledge folder (${id}): share that folder with 900685987021-compute@developer.gserviceaccount.com as Viewer, or put the right folder id on Connections.`;
+		else message = `Drive answered ${status ?? 'with an error'} for the Knowledge folder.`;
+		throw new HttpsError('failed-precondition', message);
 	}
 	const files: DriveFile[] = [];
 	let pageToken = '';
