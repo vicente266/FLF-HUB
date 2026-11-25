@@ -91,10 +91,15 @@ jobs:
         if: env.FTP_SERVER != ''
         # Old hashed files under _app/immutable are removed only after the new ones are up,
         # so a page open during the upload keeps working.
+        # Hostinger's FTP certificate is not issued for ftp.<domain>, so the host name check fails;
+        # instead the certificate is pinned by its SHA-1 fingerprint. When Hostinger renews it the
+        # upload fails safely: set the new fingerprint (printed in the error) as HOSTINGER_FTP_CERT_SHA1.
+        env:
+          CERT_SHA1: ${{ vars.HOSTINGER_FTP_CERT_SHA1 || 'D5:F8:12:83:AA:BE:1E:92:51:FF:84:B3:A5:65:D6:51:91:C9:A5:28' }}
         run: |
           sudo apt-get install -y -qq lftp >/dev/null
           lftp -u "$FTP_USERNAME,$FTP_PASSWORD" "$FTP_SERVER" -e "
-            set ftp:ssl-force true; set net:max-retries 3;
+            set ftp:ssl-force true; set net:max-retries 3; set ssl:verify-certificate/$CERT_SHA1 no;
             mirror -R --parallel=4 --exclude-glob .DS_Store build/_app '$FTP_DIR/_app';
             mirror -R --parallel=4 --exclude-glob .DS_Store --exclude ^_app/ build '$FTP_DIR';
             mirror -R --delete --parallel=4 build/_app '$FTP_DIR/_app';
