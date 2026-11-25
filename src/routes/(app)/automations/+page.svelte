@@ -57,8 +57,7 @@
 	function loadN8n() {
 		n8nError = null;
 		callAction<{ workflows: N8nWorkflow[] }>('automations:n8n.workflows')
-			// Until the backend that returns FLF's only is deployed, drop the ones it marks as not FLF.
-			.then((r) => (n8n = r.workflows.filter((w) => (w as { flf?: boolean }).flf !== false)))
+			.then((r) => (n8n = r.workflows))
 			.catch((e) => (n8nError = errorText(e)));
 	}
 	const RUN_TONE: Record<string, string> = {

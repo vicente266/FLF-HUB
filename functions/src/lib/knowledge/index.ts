@@ -453,8 +453,21 @@ export async function importFolder() {
 				`${p} (a shortcut to a folder not shared with 900685987021-compute@developer.gserviceaccount.com)`
 		)
 	];
+	// Every entry (the list is settings-sized): the imported ones to update, and any entry from
+	// before the card existed gets its defaults, so the Knowledge page's audience query finds it.
+	const all = (await collection.get()).docs;
+	const missing = all.filter((d) => !d.data().audience || !d.data().status);
+	for (const d of missing)
+		await d.ref.set(
+			{
+				audience: d.data().audience ?? 'internal',
+				status: d.data().status ?? 'draft',
+				type: d.data().type ?? 'other'
+			},
+			{ merge: true }
+		);
 	const existing = new Map(
-		(await collection.where('source', '==', 'drive').get()).docs.map((d) => [d.id, d.data()])
+		all.filter((d) => d.data().source === 'drive').map((d) => [d.id, d.data()])
 	);
 	let added = 0;
 	let updated = 0;
@@ -462,7 +475,14 @@ export async function importFolder() {
 		const docId = `${DRIVE_PREFIX}${f.id}`;
 		const prev = existing.get(docId);
 		existing.delete(docId);
-		if (prev && prev.driveModifiedTime === f.modifiedTime && prev.label === f.name) continue;
+		const folderType = typeOfFolder(f.path[0]);
+		if (
+			prev &&
+			prev.driveModifiedTime === f.modifiedTime &&
+			prev.label === f.name.slice(0, MAX_LABEL) &&
+			(prev.typeSet || prev.type === folderType)
+		)
+			continue;
 		// A shortcut to a file not shared with the Hub can't be read: report it, import the rest.
 		let text: string;
 		try {
@@ -473,7 +493,8 @@ export async function importFolder() {
 			continue;
 		}
 		// Its type from its top subfolder, unless the team set one in the Hub.
-		const type = prev?.type && prev.type !== 'other' ? prev.type : typeOfFolder(f.path[0]);
+		// Its type follows its folder (moved from Brand to Legal = a policy) unless a person set one.
+		const type = prev?.typeSet && prev.type ? prev.type : folderType;
 		const body = {
 			label: f.name.slice(0, MAX_LABEL),
 			type,
@@ -486,8 +507,8 @@ export async function importFolder() {
 			updatedAt: serverTimestamp()
 		};
 		if (prev) {
-			// The text changed in Drive: a person approves it again (until then it's not "Always").
-			const changed = prev.driveModifiedTime !== f.modifiedTime;
+			// Its text or its type (folder) changed: a person approves it again (until then not "Always").
+			const changed = prev.driveModifiedTime !== f.modifiedTime || prev.type !== type;
 			await collection
 				.doc(docId)
 				.set(
@@ -575,8 +596,8 @@ export const actions = {
 			// Editing: fields not sent keep their stored value (Claude may send only the one it changes).
 			stored = (await ref.get()).data() as (Knowledge & Record<string, any>) | undefined;
 			if (!stored) throw new HttpsError('not-found', 'Entry not found.');
-			if (!visibleTo(isAdmin(auth))(stored))
-				throw new HttpsError('permission-denied', 'This entry is for admins only.');
+			// A restricted entry doesn't exist for anyone else.
+			if (!visibleTo(isAdmin(auth))(stored)) throw new HttpsError('not-found', 'Entry not found.');
 			imported = stored.source === 'drive';
 			const sent = Object.fromEntries(Object.entries(entry).filter(([, v]) => v !== undefined));
 			entry = {
@@ -589,7 +610,23 @@ export const actions = {
 				...(imported ? { label: stored.label, description: stored.description } : {})
 			};
 		}
-		const card = cleanCard(entry, stored, auth, cleanUse(entry).use);
+		let card = cleanCard(entry, stored, auth, cleanUse(entry).use);
+		// What makes an entry say something else (its text, title or type, which sets its rank) takes
+		// a person's approval again, whoever edits it: an approved entry can't be rewritten in place.
+		if (stored && stored.status === 'approved' && card.status === 'approved' && !entry.reviewed) {
+			const changed =
+				(!imported &&
+					((entry.description ?? '') !== (stored.description ?? '') ||
+						(entry.label ?? '') !== (stored.label ?? ''))) ||
+				card.type !== (stored.type ?? 'other');
+			if (changed)
+				card = { ...card, status: 'draft', approvedBy: '', approvedOn: '', lastReviewed: '' };
+		}
+		// A type chosen in the Hub (or by Claude) sticks; otherwise the import follows the folder.
+		const typeSet =
+			entry.type !== undefined && entry.type !== (stored?.type ?? undefined)
+				? { typeSet: true }
+				: {};
 		if (card.audience === 'restricted' && !isAdmin(auth))
 			throw new HttpsError('permission-denied', 'Only admins can make an entry restricted.');
 		const meta = { updatedBy: who(auth), updatedAt: serverTimestamp() };
@@ -599,13 +636,13 @@ export const actions = {
 				throw new HttpsError('invalid-argument', 'Pick a valid expiry date.');
 			// The import's own stamp stays: a Hub edit here is not a change in Drive.
 			await ref.set(
-				{ ...cleanUse(entry), ...card, expiredAt, updatedAt: meta.updatedAt },
+				{ ...cleanUse(entry), ...card, ...typeSet, expiredAt, updatedAt: meta.updatedAt },
 				{ merge: true }
 			);
 			logger.log(`updated card of ${id}`);
 			return { id };
 		}
-		const body = { ...clean(entry), ...card, source: 'hub', ...meta };
+		const body = { ...clean(entry), ...card, ...typeSet, source: 'hub', ...meta };
 		if (ref) {
 			await ref.set(body, { merge: true });
 			logger.log(`updated ${id}`);
@@ -622,11 +659,12 @@ export const actions = {
 	},
 
 	/** Delete an entry written in the Hub (an imported one goes when its file leaves the folder). */
-	delete: async (p: any) => {
+	delete: async (p: any, auth: any) => {
 		const id = str(p?.id, 'id');
 		const ref = collection.doc(id);
-		const stored = (await ref.get()).data();
-		if (!stored) throw new HttpsError('not-found', 'Entry not found.');
+		const stored = (await ref.get()).data() as Knowledge | undefined;
+		if (!stored || !visibleTo(isAdmin(auth))(stored))
+			throw new HttpsError('not-found', 'Entry not found.');
 		if (stored.source === 'drive')
 			throw new HttpsError(
 				'failed-precondition',

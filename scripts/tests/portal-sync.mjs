@@ -73,7 +73,7 @@ const event = (names) => [
 	...Array(19 - names.length).fill('')
 ];
 
-function sheet({ annInEvent = true, renameProfilesColumn = false } = {}) {
+function sheet({ annInEvent = true, renameProfilesColumn = false, taskStatus = 'To-do' } = {}) {
 	const profiles = renameProfilesColumn
 		? PROFILES.map((h) => (h === 'Archetype' ? 'Archetype RENAMED' : h))
 		: PROFILES;
@@ -184,7 +184,7 @@ function sheet({ annInEvent = true, renameProfilesColumn = false } = {}) {
 		],
 		Tasks: [
 			['Task', 'Owner', 'Status', 'Notes', 'Due Date', 'Task ID'],
-			['Prepare retreat', 'Vicente', 'To-do', '', '30/11/2026', 'T1']
+			['Prepare retreat', 'Vicente', taskStatus, '', '30/11/2026', 'T1']
 		],
 		Perma: [
 			[
@@ -416,6 +416,19 @@ check(
 console.log('Second sync, same sheet');
 const second = await sync('second');
 check(second.created === 0 && second.moved === 0, 'running again changes nothing');
+
+console.log('Sheet tasks: the last change wins');
+const sheetTask = (await db.collection('task').where('title', '==', 'Prepare retreat').get())
+	.docs[0];
+await sheetTask.ref.update({ done: true });
+await sync('task-hub');
+check(
+	(await sheetTask.ref.get()).data().done === true,
+	'a sheet task ticked done in the Hub stays done'
+);
+await sheetTask.ref.update({ done: false });
+await sync('task-sheet', { taskStatus: 'Done' });
+check((await sheetTask.ref.get()).data().done === true, 'a status changed in the sheet is applied');
 
 console.log('Third sync, a participant removed from a kept meeting');
 const ann = portal.contactIdOf('ann@aware.io', 'Ann Aware');

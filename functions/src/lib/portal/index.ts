@@ -727,8 +727,23 @@ export async function run() {
 		b = batch();
 		n = 0;
 	};
+	// Sheet tasks: whichever changed last wins, as for a contact's stage. Done and assignee are taken
+	// from the sheet only when the sheet's value changed since the last sync, so ticking a task done
+	// or reassigning it in the Hub sticks. One read of the imported tasks.
+	const prevTasks = new Map(
+		(await crm.tasks.where('source', '==', 'portal').get()).docs.map((d) => [d.id, d.data()])
+	);
 	for (const t of p.tasks) {
-		b.set(crm.tasks.doc(t.id), { ...t.data, source: 'portal', syncedAt: now }, { merge: true });
+		const prev = prevTasks.get(t.id);
+		const { done, cancelled, assigneeUid, ...rest } = t.data as Record<string, unknown>;
+		const sheet = { sheetDone: done, sheetAssigneeUid: assigneeUid };
+		const data: Record<string, unknown> = { ...rest, ...sheet, source: 'portal', syncedAt: now };
+		// Before sheetDone existed, the stored value was the sheet's.
+		const lastDone = prev ? (prev.sheetDone ?? prev.done) : undefined;
+		const lastAssignee = prev ? (prev.sheetAssigneeUid ?? prev.assigneeUid) : undefined;
+		if (!prev || lastDone !== done) Object.assign(data, { done, cancelled });
+		if (!prev || lastAssignee !== assigneeUid) data.assigneeUid = assigneeUid;
+		b.set(crm.tasks.doc(t.id), data, { merge: true });
 		if (++n >= 400) await flush();
 	}
 	for (const w of p.wellbeing) {
