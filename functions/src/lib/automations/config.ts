@@ -70,7 +70,7 @@ export const AUTOMATIONS: AutomationDef[] = [
 		id: 'knowledge-sync',
 		name: 'Import the Knowledge folder',
 		description:
-			'Every night, imports the Google Docs and text files of the Knowledge folder in Drive as Knowledge entries (new ones start as “When relevant”); a file removed from the folder leaves Knowledge. Read only on Drive.',
+			'Every night, imports the Google Docs and text files of the Knowledge folder in Drive and its subfolders as Knowledge entries (new ones start as “When relevant”); a file removed from the folder leaves Knowledge. Read only on Drive.',
 		trigger: 'schedule',
 		schedule: 'Every day at 03:00 (Madrid)',
 		uses: ['knowledge-folder'],

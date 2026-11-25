@@ -57,9 +57,12 @@ entries are left out whatever their use.
 - Import (`core:knowledge.sync`, **Sync now** on the Knowledge page, `flf_sync_knowledge`, and the
   `knowledge-sync` automation every night at 03:00): each Google Doc, text or Markdown file becomes
   the entry `drive-<file id>` (title = file name, text up to 50,000 characters, link to the file).
-  A file's text is re-read only when it changed; a file removed from the folder takes its entry
-  with it. Other file types are listed as not importable. Read only: the Hub never writes to Drive.
+  Subfolders are read too, four levels deep; a new entry gets its top subfolder ("Legal") as a
+  topic. A file's text is re-read only when it changed; a file removed from the folder takes its
+  entry with it, but only after a whole listing (none when the listing stopped at the entry limit
+  or the depth). Other file types (PDF, Sheets, Slides) are listed as not importable. Read only:
+  the Hub never writes to Drive.
 - An imported entry's title and text are edited in Drive; in the Hub only its use, topics and
   expiry change, and it can't be deleted there (remove the file, or set it to Off).
-- Reads: one Drive listing per import plus one export per changed file; one Firestore query of the
+- Reads: one Drive listing per folder per import plus one export per changed file; one Firestore query of the
   imported entries.

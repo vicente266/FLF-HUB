@@ -190,7 +190,13 @@ interface DriveFile {
 	mimeType: string;
 	modifiedTime: string;
 	webViewLink: string;
+	/** The subfolders it sits in, from the Knowledge folder down ([] at the top). */
+	path: string[];
 }
+
+const FOLDER = 'application/vnd.google-apps.folder';
+/** How deep the import goes into subfolders (the Knowledge folder is level 0). */
+const MAX_DEPTH = 4;
 
 async function drive() {
 	const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/drive.readonly'] });
@@ -202,8 +208,15 @@ async function folderId(): Promise<string> {
 	return String(s?.folderId ?? '').trim() || DEFAULT_FOLDER_ID;
 }
 
-/** The folder's files (direct children, not trashed). Read only. */
-export async function listFolder(): Promise<{ folderId: string; files: DriveFile[] }> {
+/**
+ * The folder's files, its subfolders' included (up to MAX_DEPTH levels), not trashed. Read only.
+ * `complete` is false when the listing stopped early: then nothing may be removed for being absent.
+ */
+export async function listFolder(): Promise<{
+	folderId: string;
+	files: DriveFile[];
+	complete: boolean;
+}> {
 	const id = await folderId();
 	const client = await drive();
 	// An unshared folder lists as empty, not as an error: look at the folder itself first.
@@ -229,23 +242,37 @@ export async function listFolder(): Promise<{ folderId: string; files: DriveFile
 		throw new HttpsError('failed-precondition', message);
 	}
 	const files: DriveFile[] = [];
-	let pageToken = '';
-	do {
-		const params = new URLSearchParams({
-			q: `'${id.replace(/'/g, '')}' in parents and trashed = false`,
-			fields: 'nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink)',
-			pageSize: '200',
-			supportsAllDrives: 'true',
-			includeItemsFromAllDrives: 'true',
-			...(pageToken ? { pageToken } : {})
-		});
-		const res = await client.request<{ files?: DriveFile[]; nextPageToken?: string }>({
-			url: `https://www.googleapis.com/drive/v3/files?${params}`
-		});
-		files.push(...(res.data.files ?? []));
-		pageToken = res.data.nextPageToken ?? '';
-	} while (pageToken && files.length < MAX_ENTRIES);
-	return { folderId: id, files };
+	let complete = true;
+	const queue: { id: string; path: string[] }[] = [{ id, path: [] }];
+	while (queue.length) {
+		const folder = queue.shift()!;
+		let pageToken = '';
+		do {
+			const params = new URLSearchParams({
+				q: `'${folder.id.replace(/'/g, '')}' in parents and trashed = false`,
+				fields: 'nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink)',
+				pageSize: '200',
+				supportsAllDrives: 'true',
+				includeItemsFromAllDrives: 'true',
+				...(pageToken ? { pageToken } : {})
+			});
+			const res = await client.request<{
+				files?: Omit<DriveFile, 'path'>[];
+				nextPageToken?: string;
+			}>({ url: `https://www.googleapis.com/drive/v3/files?${params}` });
+			for (const f of res.data.files ?? []) {
+				if (f.mimeType !== FOLDER) files.push({ ...f, path: folder.path });
+				else if (folder.path.length < MAX_DEPTH)
+					queue.push({ id: f.id, path: [...folder.path, f.name] });
+				else complete = false;
+			}
+			pageToken = res.data.nextPageToken ?? '';
+			if (files.length >= MAX_ENTRIES) {
+				return { folderId: id, files: files.slice(0, MAX_ENTRIES), complete: false };
+			}
+		} while (pageToken);
+	}
+	return { folderId: id, files, complete };
 }
 
 async function textOf(f: DriveFile): Promise<string> {
@@ -268,9 +295,10 @@ async function textOf(f: DriveFile): Promise<string> {
  * starts as `relevant`, since documents can be long. Never writes to Drive.
  */
 export async function importFolder() {
-	const { folderId: id, files } = await listFolder();
+	const { folderId: id, files, complete } = await listFolder();
 	const readable = files.filter((f) => READABLE.includes(f.mimeType));
-	const skipped = files.filter((f) => !READABLE.includes(f.mimeType)).map((f) => f.name);
+	const where = (f: DriveFile) => [...f.path, f.name].join(' / ');
+	const skipped = files.filter((f) => !READABLE.includes(f.mimeType)).map(where);
 	const existing = new Map(
 		(await collection.where('source', '==', 'drive').get()).docs.map((d) => [d.id, d.data()])
 	);
@@ -300,15 +328,16 @@ export async function importFolder() {
 				...body,
 				expiredAt: '',
 				use: 'relevant',
-				topics: [],
+				// Its top subfolder ("Legal", "Scoring"…) is a topic Claude can ask for.
+				topics: f.path.length ? [f.path[0].slice(0, 30)] : [],
 				createdAt: serverTimestamp()
 			});
 			added++;
 		}
 	}
-	// What's left was deleted from (or moved out of) the folder.
-	for (const docId of existing.keys()) await collection.doc(docId).delete();
-	const removed = existing.size;
+	// What's left was deleted from (or moved out of) the folder; only after a whole listing.
+	if (complete) for (const docId of existing.keys()) await collection.doc(docId).delete();
+	const removed = complete ? existing.size : 0;
 	await db
 		.collection('connection')
 		.doc('knowledge-folder')

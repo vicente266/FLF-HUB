@@ -261,7 +261,7 @@ async function check(id: string, secrets: Secrets): Promise<{ status: Status; de
 				).length;
 				return {
 					status: 'ok',
-					detail: `${files.length} files in the folder, ${readable} importable (Google Docs, text, Markdown).`
+					detail: `${files.length} files in the folder and its subfolders, ${readable} importable (Google Docs, text, Markdown).`
 				};
 			}
 			case 'claude-connector': {
