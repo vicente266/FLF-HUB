@@ -1,0 +1,9 @@
+{
+	"name": "flf-hub-checkly",
+	"private": true,
+	"description": "Checkly monitoring as code. Deployed by the Deploy workflow; see README, \"Monitoring\".",
+	"type": "module",
+	"devDependencies": {
+		"checkly": "10.4.0"
+	}
+}

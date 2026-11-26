@@ -153,3 +153,35 @@ jobs:
             mirror -R --parallel=4 --exclude-glob .DS_Store --exclude ^_app/ build '$FTP_DIR';
             mirror -R --delete --parallel=4 build/_app '$FTP_DIR/_app';
             bye"
+
+  monitoring:
+    name: Checkly (monitoring as code)
+    # After the web app, so the browser check is updated against the page that is now live.
+    needs: web
+    if: always() && needs.web.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CHECKLY_API_KEY: ${{ secrets.CHECKLY_API_KEY }}
+      CHECKLY_ACCOUNT_ID: ${{ secrets.CHECKLY_ACCOUNT_ID }}
+      CHECKLY_ALERT_EMAIL: ${{ vars.CHECKLY_ALERT_EMAIL }}
+    steps:
+      - name: Not set up
+        if: env.CHECKLY_API_KEY == ''
+        run: echo "CHECKLY_API_KEY is not set; skipping the Checkly deploy."
+      - uses: actions/checkout@v4
+        if: env.CHECKLY_API_KEY != ''
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v4
+        if: env.CHECKLY_API_KEY != ''
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: checkly/package-lock.json
+      - name: Deploy checks
+        if: env.CHECKLY_API_KEY != ''
+        working-directory: checkly
+        run: |
+          npm ci
+          npx checkly deploy --force

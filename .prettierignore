@@ -4,3 +4,4 @@ functions/lib
 build
 .svelte-kit
 firestore-export
+checkly/package-lock.json

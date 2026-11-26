@@ -112,3 +112,14 @@ Actions tab (**Deploy → Run workflow**).
   Run Admin, Service Account User, Secret Manager Viewer, Artifact Registry Administrator and
   Cloud Scheduler Admin. New Secret Manager secrets are still created by hand
   (`firebase functions:secrets:set`) before the deploy that needs them.
+- **Monitoring (Checkly):** secrets `CHECKLY_API_KEY` (Checkly → User settings → API keys) and
+  `CHECKLY_ACCOUNT_ID` (Checkly → Account settings → General); optional variable
+  `CHECKLY_ALERT_EMAIL` for a failure email. See "Monitoring".
+
+## Monitoring
+
+Checkly watches from outside on the free Hobby plan. The URL monitors (website, portal login,
+Hub) are set up in Checkly by hand. The browser check in `checkly/` is code, deployed by the
+Deploy workflow: every hour, from one location, it opens the Hub signed out and fails if the app
+doesn't start, doesn't reach the sign-in page or logs an error. It can't see bugs behind sign-in
+(sign-in is Google only). Health shows every check's pass/fail through the `checkly` connection.
