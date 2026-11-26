@@ -4,8 +4,9 @@
 	import { listen, setTitle, formatDate, toDate } from '$lib/utils';
 	import type { CalendarEvent } from '$lib/types/crm';
 	import Empty from '$lib/components/shared/Empty.svelte';
+	import UpcomingMeetings from '$lib/components/events/UpcomingMeetings.svelte';
 
-	setTitle('Events', 'Meetings with contacts, from the calendars (via the portal sheet)');
+	setTitle('Events', 'Upcoming meetings from the calendars, and past ones (via the portal sheet)');
 
 	let events = $state<CalendarEvent[]>([]);
 	let loading = $state(true);
@@ -48,6 +49,9 @@
 </script>
 
 <div class="mx-auto max-w-4xl space-y-4">
+	<UpcomingMeetings />
+
+	<h3 class="pt-2 font-bold">Meetings from the portal sheet</h3>
 	<input
 		class="input w-72"
 		placeholder="Search a title or a person"

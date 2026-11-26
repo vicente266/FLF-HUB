@@ -81,7 +81,11 @@ const CONTACTS = [
 	['guru', 'Elena Vidal', 'elena@growthcraft.com', 'Growthcraft', 'conversation', 'referral', 6],
 	['guru', 'Peter Lindqvist', 'peter@exitpath.se', 'ExitPath', 'active', 'event', 60],
 	['investor', 'Rachel Kim', 'rachel@northstar.vc', 'Northstar Ventures', 'intro', 'event', 3],
-	['investor', 'Diego Alonso', 'diego@kapital.es', 'Kapital Seed', 'roster', 'referral', 50]
+	['investor', 'Diego Alonso', 'diego@kapital.es', 'Kapital Seed', 'roster', 'referral', 50],
+	// No owner, quiet for weeks (Home's "no owner" count, bulk assign), and one Lost.
+	['fellow', 'Iris Novak', 'iris@tallow.io', 'Tallow', 'target', 'website', 21, 'none'],
+	['investor', 'Hugo Brandt', 'hugo@alpine.vc', 'Alpine Capital', 'prospect', 'event', 30, 'none'],
+	['fellow', 'Nina Park', 'nina@orbit.dev', 'Orbit', 'lost', 'website', 25]
 ];
 const STAGES = {
 	fellow: ['application', 'target', 'aware', 'teaser', 'fellow', 'lost'],
@@ -107,8 +111,8 @@ const sherpa = await user(
 );
 const owners = [me, sherpa];
 
-for (const [i, [type, name, email, company, stage, source, days]] of CONTACTS.entries()) {
-	const owner = owners[i % 2];
+for (const [i, [type, name, email, company, stage, source, days, noOwner]] of CONTACTS.entries()) {
+	const owner = noOwner ? { uid: null, name: null } : owners[i % 2];
 	const ref = db.doc(`contact/seed-${i}`);
 	await db.recursiveDelete(ref);
 	await ref.set({
@@ -126,6 +130,7 @@ for (const [i, [type, name, email, company, stage, source, days]] of CONTACTS.en
 		ownerUid: owner.uid,
 		ownerName: owner.name,
 		needsAttention: days > 14 && !FINAL.includes(stage),
+		...(stage === 'lost' ? { lostReason: 'Chose another programme' } : {}),
 		stageChangedAt: ago(Math.min(days, 5)),
 		lastActivityAt: ago(days),
 		createdAt: ago(days + 3),
@@ -139,13 +144,13 @@ for (const [i, [type, name, email, company, stage, source, days]] of CONTACTS.en
 		await ref.collection('activity').add({
 			kind: 'stage',
 			text: `Moved to ${stage}`,
-			by: owner.name,
+			by: owner.name ?? 'Seed',
 			at: ago(Math.min(days, 5))
 		});
 	await ref.collection('activity').add({
 		kind: 'note',
 		text: 'Intro call: strong founder, clear on the long game.',
-		by: owner.name,
+		by: owner.name ?? 'Seed',
 		at: ago(days)
 	});
 	if (!FINAL.includes(stage)) {

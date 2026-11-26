@@ -185,6 +185,17 @@ export async function logActivity(
 }
 
 /**
+ * A timeline entry that is not activity with the person (e.g. a new owner): it doesn't reset
+ * "no activity for N days", so a new owner still sees which of their contacts have gone quiet.
+ */
+export async function logEvent(contactId: string, kind: ActivityKind, text: string, by: string) {
+	await contacts
+		.doc(contactId)
+		.collection('activity')
+		.add(entry(kind, text, by, {}));
+}
+
+/**
  * Close a contact's open tasks made by these automations (they belonged to a stage, next step or
  * stale flag that no longer applies). Kept as done, marked superseded; manual, Claude and portal
  * tasks have no `automationId` and are never touched. One query. Returns how many.
@@ -288,6 +299,87 @@ function fields(p: any, type: string) {
 	};
 }
 
+/** An owner's display name (null for no owner); refuses an unknown user. */
+async function ownerNameOf(uid: string | null): Promise<string | null> {
+	if (!uid) return null;
+	const u = await db.collection('user').doc(uid).get();
+	if (!u.exists) throw new HttpsError('not-found', 'User not found.');
+	return u.data()?.name || u.data()?.email;
+}
+
+/** Most contacts `contact.assignMany` takes in one call. */
+const ASSIGN_MAX = 100;
+
+/**
+ * `contact.assign` for many contacts: owner fields, automation tasks handed over, a timeline entry
+ * "Assigned to X" (which is activity, so their check-in tasks close). Contacts that already have
+ * that owner are left alone. Reads: the contacts, the owner, and one task query per 30 contacts.
+ * Returns the counts and each changed contact's previous owner, for Undo.
+ */
+async function assignMany(p: any, auth: any) {
+	const ids = Array.isArray(p.ids)
+		? [...new Set<string>(p.ids.map((x: unknown) => String(x ?? '').trim()).filter(Boolean))]
+		: [];
+	if (!ids.length) throw new HttpsError('invalid-argument', 'Pick at least one contact.');
+	if (ids.length > ASSIGN_MAX)
+		throw new HttpsError('invalid-argument', `Pick ${ASSIGN_MAX} contacts or fewer.`);
+	const ownerUid = str(p.ownerUid, 'ownerUid', false) || null;
+	const ownerName = await ownerNameOf(ownerUid);
+	const snaps = await db.getAll(...ids.map((id) => contacts.doc(id)));
+	const changed = snaps.filter(
+		(s) => s.exists && ((s.data() as Contact).ownerUid ?? null) !== ownerUid
+	);
+	const by = who(auth);
+	const text = ownerName ? `Assigned to ${ownerName}` : 'Unassigned';
+	const previous: Record<string, string | null> = {};
+	let tasksMoved = 0;
+	// 30 contacts per round: one `in` query for their open tasks, then one batch (two writes per
+	// contact plus a handful of tasks, well under the 500-write limit).
+	for (let i = 0; i < changed.length; i += 30) {
+		const part = changed.slice(i, i + 30);
+		const open = await tasks
+			.where(
+				'contactId',
+				'in',
+				part.map((s) => s.id)
+			)
+			.where('done', '==', false)
+			.get();
+		const batch = db.batch();
+		for (const s of part) {
+			const c = s.data() as Contact;
+			previous[s.id] = c.ownerUid ?? null;
+			batch.update(s.ref, {
+				ownerUid,
+				ownerName,
+				updatedAt: serverTimestamp()
+			});
+			// On the timeline, but not activity: a new owner doesn't reset "no activity for N days".
+			batch.set(s.ref.collection('activity').doc(), entry('assigned', text, by));
+			// As handOverTasks does for one contact: the automation tasks, the check-in included, go to
+			// the new owner (none: whoever last moved it).
+			const assignee = ownerUid || c.changedByUid || null;
+			for (const t of open.docs) {
+				const d = t.data();
+				if (d.contactId !== s.id || !d.automationId) continue;
+				if (assignee && d.assigneeUid !== assignee) {
+					batch.update(t.ref, { assigneeUid: assignee });
+					tasksMoved++;
+				}
+			}
+		}
+		await batch.commit();
+	}
+	return {
+		assigned: changed.length,
+		unchanged: snaps.filter((s) => s.exists).length - changed.length,
+		missing: snaps.filter((s) => !s.exists).length,
+		tasksMoved,
+		ownerName,
+		previous
+	};
+}
+
 /** The contact with this email, if there is one. */
 export async function findByEmail(email: string) {
 	if (!email) return null;
@@ -318,12 +410,7 @@ export async function create(p: any, by: string, uid: string): Promise<string> {
 			`Create it in another stage, then move it to ${stage.label} with the reason.`
 		);
 	const ownerUid = str(p.ownerUid, 'ownerUid', false) || null;
-	let ownerName: string | null = null;
-	if (ownerUid) {
-		const u = await db.collection('user').doc(ownerUid).get();
-		if (!u.exists) throw new HttpsError('not-found', 'User not found.');
-		ownerName = u.data()?.name || u.data()?.email;
-	}
+	const ownerName = await ownerNameOf(ownerUid);
 	const ref = contacts.doc();
 	await ref.set({
 		type,
@@ -536,16 +623,12 @@ export const actions = {
 		const ownerUid = str(p.ownerUid, 'ownerUid', false) || null;
 		const doc = await contacts.doc(id).get();
 		if (!doc.exists) throw new HttpsError('not-found', 'Contact not found.');
-		let ownerName: string | null = null;
-		if (ownerUid) {
-			const u = await db.collection('user').doc(ownerUid).get();
-			if (!u.exists) throw new HttpsError('not-found', 'User not found.');
-			ownerName = u.data()?.name || u.data()?.email;
-		}
+		const ownerName = await ownerNameOf(ownerUid);
 		await doc.ref.update({ ownerUid, ownerName, updatedAt: serverTimestamp() });
 		// No owner: back to whoever last moved it, as a new automation task would go.
 		await handOverTasks(id, ownerUid || (doc.data() as Contact).changedByUid || null);
-		await logActivity(
+		// Not activity with the person: "no activity for N days" keeps counting.
+		await logEvent(
 			id,
 			'assigned',
 			ownerName ? `Assigned to ${ownerName}` : 'Unassigned',
@@ -553,6 +636,8 @@ export const actions = {
 		);
 		return { ok: true };
 	},
+
+	'contact.assignMany': assignMany,
 
 	'contact.delete': async (p: any) => {
 		const id = str(p.id, 'id');

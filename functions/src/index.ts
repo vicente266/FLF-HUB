@@ -23,6 +23,7 @@ import * as knowledge from './lib/knowledge/index';
 import * as portal from './lib/portal/index';
 import * as tv from './lib/tv/index';
 import * as skills from './lib/skills/index';
+import * as calendar from './lib/calendar/index';
 
 setGlobalOptions({ maxInstances: 10, region: REGION });
 
@@ -228,6 +229,13 @@ export const crmAction = onCall(
 		'contact.nextStep': { ...crmWrite, handler: crm.actions['contact.nextStep'] },
 		/** Give a contact an owner, or none. */
 		'contact.assign': { ...crmWrite, handler: crm.actions['contact.assign'] },
+		/** Give up to 100 contacts one owner, or none; returns counts and each previous owner (Undo). */
+		'contact.assignMany': { ...crmWrite, handler: crm.actions['contact.assignMany'] },
+		/** Meetings in the next 30 days from the Calendar connection, attendees matched to contacts. */
+		'events.upcoming': {
+			permission: 'crm.any.read',
+			handler: async () => calendar.upcoming()
+		},
 		/** Delete a contact, its timeline and its tasks. */
 		'contact.delete': {
 			permission: 'crm.any.delete',

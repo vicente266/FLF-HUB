@@ -38,20 +38,23 @@
 	/**
 	 * One pipeline as a funnel. Counts are where contacts are now, so "reached" a stage means being in
 	 * it or any later working stage; a losing stage (Lost, Declined) is apart, out of the funnel.
-	 * `next` is the share of those who reached this stage that went on to the next one.
+	 * The funnel starts at the first stage with contacts (an unused first stage would read as 100%
+	 * going on). `next` is the share of those who reached this stage that went on to the next one; the
+	 * page shows '—' instead from a stage nobody is in, since nothing went through it to measure.
 	 */
 	function funnel(rows: Row[], stages: Stage[]) {
 		const lost = new Set(stages.filter((s) => s.askReason).map((s) => s.id));
 		const total = rows.reduce((a, r) => a + r.count, 0);
-		const path = rows.filter((r) => !lost.has(r.stage));
+		const working = rows.filter((r) => !lost.has(r.stage));
+		const first = working.findIndex((r) => r.count > 0);
+		const path = first < 0 ? [] : working.slice(first);
 		const reached = path.map((_, i) => path.slice(i).reduce((a, r) => a + r.count, 0));
+		const next = (i: number) =>
+			i < path.length - 1 ? `${pct(reached[i + 1], reached[i])}%` : null;
 		return {
 			total,
-			path: path.map((r, i) => ({
-				...r,
-				share: pct(r.count, total),
-				next: i < path.length - 1 ? pct(reached[i + 1], reached[i]) : null
-			})),
+			skipped: first > 0 ? working.slice(0, first).map((r) => r.label) : [],
+			path: path.map((r, i) => ({ ...r, share: pct(r.count, total), next: next(i) })),
 			lost: rows.filter((r) => lost.has(r.stage)).map((r) => ({ ...r, share: pct(r.count, total) }))
 		};
 	}
@@ -79,6 +82,14 @@
 						<div class="eyebrow">{cfg.value.pipelines[t].plural}</div>
 						<div class="text-xs text-ink-soft">{f.total} in total</div>
 					</div>
+					{#if f.skipped.length}
+						<p class="mt-1 text-[11px] text-ink-soft" title="Stages with no contacts now">
+							Starts after {f.skipped.join(', ')} (empty)
+						</p>
+					{/if}
+					{#if !f.path.length}
+						<p class="mt-3 text-xs text-ink-soft">No contacts in the pipeline yet.</p>
+					{/if}
 					<ul class="mt-3">
 						{#each f.path as r (r.stage)}
 							<li>
@@ -93,7 +104,12 @@
 									<div class="h-2 rounded-full bg-primary-600" style="width: {r.share}%"></div>
 								</div>
 								{#if r.next !== null}
-									<div class="py-1 pl-2 text-[11px] text-ink-soft">↓ {r.next}% went on</div>
+									<div
+										class="py-1 pl-2 text-[11px] text-ink-soft"
+										title={r.count ? undefined : 'Nobody is in this stage now: nothing to measure'}
+									>
+										↓ {r.count ? `${r.next} went on` : '—'}
+									</div>
 								{/if}
 							</li>
 						{/each}

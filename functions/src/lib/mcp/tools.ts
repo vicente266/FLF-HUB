@@ -20,6 +20,7 @@ import * as reports from '../reports/index';
 import * as tv from '../tv/index';
 import * as health from '../health/index';
 import * as portal from '../portal/index';
+import * as calendar from '../calendar/index';
 import { PERMISSIONS } from '../permissions';
 import { audit, type Caller } from './caller';
 import { LIST_LIMIT, MCP_SERVER_NAME, SCAN_LIMIT, THREAD_LIMIT } from './config';
@@ -174,8 +175,9 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			title: 'FLF Hub overview',
 			description:
 				'Start here. Who you are in the Hub and what you may do, the pipelines (Fellows, Gurus, ' +
-				'Investors) with their stages, your KPIs (the team’s new contacts in 30 days, your contacts ' +
-				'needing attention, your open and overdue tasks) and your own open tasks.',
+				'Investors) with their stages, your KPIs (the team’s new contacts in 30 days, contacts ' +
+				'needing attention for the team, yours and with no owner, your open and overdue tasks) and ' +
+				'your own open tasks.',
 			inputSchema: z.object({}),
 			annotations: read
 		},
@@ -451,6 +453,33 @@ export function registerTools(server: McpServer, caller: Caller): void {
 					rows.map((e) => e.id)
 				);
 				return data({ count: rows.length, events: rows });
+			}
+		)
+	);
+
+	server.registerTool(
+		'flf_list_upcoming_meetings',
+		{
+			title: 'List upcoming meetings',
+			description:
+				'Meetings in the next 30 days from the team’s Google Calendars (Connections → Calendar), ' +
+				'soonest first: title, start, end, location or Meet link, guests with their CRM contact id ' +
+				'when their email matches one. Read live; configured=false when no calendar is set up.',
+			inputSchema: z.object({}),
+			annotations: read
+		},
+		run(
+			'flf_list_upcoming_meetings',
+			() => 'next-30-days',
+			async () => {
+				await need('crm.any.read');
+				const out = await calendar.upcoming();
+				await audit(
+					caller,
+					'flf_list_upcoming_meetings',
+					out.meetings.map((m) => m.id)
+				);
+				return data(out);
 			}
 		)
 	);
@@ -820,6 +849,28 @@ export function registerTools(server: McpServer, caller: Caller): void {
 				await act('crm', 'contact.assign', { id: contact_id, ownerUid: owner_id });
 				return data({ assigned: contact_id, ownerId: owner_id || null });
 			}
+		)
+	);
+
+	server.registerTool(
+		'flf_assign_owner_many',
+		{
+			title: 'Assign owner to many contacts',
+			description:
+				'Give up to 100 contacts one owner (id from flf_list_team), or none with an empty id, as ' +
+				'the CRM list’s bulk assign does. Returns how many changed and each one’s previous owner ' +
+				'(to undo, call again per previous owner).',
+			inputSchema: z.object({
+				contact_ids: z.array(ID).min(1).max(100),
+				owner_id: z.string().max(128)
+			}),
+			annotations: write
+		},
+		run(
+			'flf_assign_owner_many',
+			(a) => `${a.contact_ids.length} contacts`,
+			async ({ contact_ids, owner_id }) =>
+				data(await act('crm', 'contact.assignMany', { ids: contact_ids, ownerUid: owner_id }))
 		)
 	);
 

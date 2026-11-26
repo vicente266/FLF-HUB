@@ -29,7 +29,15 @@
 	setTitle('Home', 'What needs you today');
 
 	interface Summary {
-		kpis: { newLast30: number; needsAttention: number; openTasks: number; overdueTasks: number };
+		kpis: {
+			newLast30: number;
+			/** Open, no activity for staleDays: the team's, the caller's, and with no owner. */
+			attentionTeam: number;
+			attentionMine: number;
+			attentionNoOwner: number;
+			openTasks: number;
+			overdueTasks: number;
+		};
 	}
 
 	let tasks = $state<Task[]>([]);
@@ -124,7 +132,7 @@
 	{#if summary}
 		{@const k = summary.kpis}
 		<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-			{#each [{ label: 'My open tasks', value: k.openTasks, href: '/tasks?scope=mine', tone: '' }, { label: 'My overdue tasks', value: k.overdueTasks, href: '/tasks?scope=mine#overdue', tone: k.overdueTasks ? 'text-danger' : '' }, { label: 'My contacts needing attention', value: k.needsAttention, href: '/crm?type=all&attention=1&owner=me', tone: k.needsAttention ? 'text-warning' : '' }, { label: 'New contacts (30 days, team)', value: k.newLast30, href: '/crm?type=all&since=30', tone: '' }] as { label, value, href, tone } (label)}
+			{#each [{ label: 'My open tasks', value: k.openTasks, href: '/tasks?scope=mine', tone: '' }, { label: 'My overdue tasks', value: k.overdueTasks, href: '/tasks?scope=mine#overdue', tone: k.overdueTasks ? 'text-danger' : '' }, { label: 'My contacts needing attention', value: k.attentionMine, href: '/crm?type=all&attention=1&owner=me', tone: k.attentionMine ? 'text-warning' : '' }, { label: 'New contacts (30 days, team)', value: k.newLast30, href: '/crm?type=all&since=30', tone: '' }] as { label, value, href, tone } (label)}
 				<a {href} class="block card px-4 py-3 hover:border-primary-300">
 					<div class="text-xs font-semibold text-ink-soft">{label}</div>
 					<div class="mt-1 text-2xl font-bold {tone}">{value}</div>
@@ -209,6 +217,27 @@
 				<div class="flex items-center gap-2 border-b border-line/60 px-4 py-3">
 					<TriangleAlert class="h-4 w-4 text-warning" />
 					<h3 class="font-bold">Needs attention</h3>
+					{#if summary}
+						{@const k = summary.kpis}
+						<!-- The team's total, then yours and no owner: each opens the CRM filtered that way. -->
+						<div class="ml-auto text-xs whitespace-nowrap text-ink-soft">
+							<a
+								href="/crm?type=all&attention=1"
+								class="text-sm font-bold text-ink hover:text-primary-700"
+								title="Open contacts with no activity for {cfg.value?.staleDays ?? 14} days"
+							>
+								{k.attentionTeam}
+							</a>
+							·
+							<a href="/crm?type=all&attention=1&owner=me" class="hover:text-primary-700">
+								yours {k.attentionMine}
+							</a>
+							·
+							<a href="/crm?type=all&attention=1&owner=none" class="hover:text-primary-700">
+								no owner {k.attentionNoOwner}
+							</a>
+						</div>
+					{/if}
 				</div>
 				{#if attention.length === 0}
 					<p class="px-4 py-6 text-sm text-ink-soft">

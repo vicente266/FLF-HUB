@@ -92,6 +92,21 @@ export function formatDateTime(value: unknown): string {
 	return d ? dateTimeFmt.format(d) : '—';
 }
 
+const timeFmt = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' });
+const dayFmt = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+
+/** "14:30". */
+export function formatTime(value: unknown): string {
+	const d = toDate(value);
+	return d ? timeFmt.format(d) : '—';
+}
+
+/** "Monday 1 December", for lists grouped by day. */
+export function formatDay(value: unknown): string {
+	const d = toDate(value);
+	return d ? dayFmt.format(d) : '—';
+}
+
 /** "3 days ago", "in 2 hours". */
 export function relative(value: unknown): string {
 	const d = toDate(value);

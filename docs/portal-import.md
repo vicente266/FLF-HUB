@@ -16,6 +16,8 @@ it never writes to it, never calls the webhook and never runs, edits or publishe
 | `Wealth`       | `fellowFinance` totals per report and row type             | Permission `wealth.any.read`, never to Claude.                                                                                                                                                        |
 | `Events`       | `event` + a `meeting` entry on each participant's timeline | Written by n8n "Calendar → Events database". Participants (CRM names) matched to contacts by name. Events page, `flf_list_events`.                                                                    |
 
+Upcoming meetings are not imported: Events → Upcoming reads Google Calendar directly (docs/calendar.md).
+
 Never read: `PasswordHash`, `Reset Token`, `Reset Expiry`, `Permissions`, `Read Versions`
 (`TABS` in `functions/src/lib/portal/config.ts` lists the only columns read). Survey, Content
 Base and Intro Request are not imported yet.

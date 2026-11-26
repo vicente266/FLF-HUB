@@ -38,6 +38,8 @@ const SETUP_HINT = 'Open it on Connections and follow “How to set it up”.';
 const ERROR_HINT: Record<string, string> = {
 	'portal-sheet':
 		'The Hub can’t read the portal sheet. Check that it is still shared with the Hub as Viewer and that the spreadsheet id is right, then press Test connection.',
+	calendar:
+		'The Hub can’t read a calendar. Check the calendar ids and that each calendar is shared with the Hub (“See all event details”), then press Test.',
 	checkly: 'The Hub can’t reach Checkly. Try Test connection again in a few minutes.',
 	n8n: 'The Hub can’t reach n8n. Try Test connection again in a few minutes; if it keeps failing, a developer should check the n8n API key.',
 	'knowledge-folder':
@@ -230,6 +232,11 @@ async function check(id: string, secrets: Secrets): Promise<CheckResult> {
 					status: 'ok',
 					detail: `All columns found. Rows: ${rows}. Contacts: ${p.contacts.length}.${left}`
 				};
+			}
+			case 'calendar': {
+				// Lazy: calendar is not needed by the other checks.
+				const calendar = await import('../calendar/index.js');
+				return await calendar.check(settings.calendars);
 			}
 			case 'checkly': {
 				if (!secrets.checklyApiKey || !settings.accountId) {

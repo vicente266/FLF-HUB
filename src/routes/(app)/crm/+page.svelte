@@ -5,10 +5,12 @@
 		where,
 		orderBy,
 		limit,
+		getCountFromServer,
 		Timestamp,
 		type QueryConstraint
 	} from 'firebase/firestore';
 	import { untrack } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { page } from '$app/state';
 	import { afterNavigate, goto } from '$app/navigation';
 	import Plus from '@lucide/svelte/icons/plus';
@@ -21,6 +23,7 @@
 	import NewContactDialog from '$lib/components/crm/NewContactDialog.svelte';
 	import ReasonDialog from '$lib/components/crm/ReasonDialog.svelte';
 	import MoveNotice from '$lib/components/crm/MoveNotice.svelte';
+	import BulkAssign from '$lib/components/crm/BulkAssign.svelte';
 	import { db } from '$lib/firebase';
 	import { me } from '$lib/stores';
 	import { hasPermission, listen, setTitle, relative, formatDate, toDate } from '$lib/utils';
@@ -46,15 +49,17 @@
 	const cfg = crmConfig();
 	const canWrite = hasPermission('crm.any.write');
 
-	// Tab, view and filters live in the URL (?type=investor&view=list&attention=1&owner=me&since=30),
-	// so a link or the contact page's back link opens the same list. A phone opens in list view.
-	// "all" is every type, as a list (Home's cards link there).
+	// Tab, view and filters live in the URL (?type=investor&view=list&attention=1&owner=me&since=30
+	// &lost=1), so a link or the contact page's back link opens the same list. A phone opens in list
+	// view. "all" is every type, as a list (Home's cards link there). owner=none: no owner.
 	const DAY = 86_400_000;
 	let type = $state<ContactType | 'all'>('');
 	let view = $state<'board' | 'list'>('board');
 	let search = $state('');
-	let mine = $state(false);
+	let owner = $state<'' | 'me' | 'none'>('');
 	let attentionOnly = $state(false);
+	/** Lost and Declined (losing final stages) are hidden unless this is on. */
+	let showLost = $state(false);
 	/** Only contacts created in the last N days (0 = any). */
 	let since = $state(0);
 	function readUrl(url: URL) {
@@ -66,8 +71,10 @@
 				? 'list'
 				: 'board';
 		search = p.get('q') ?? '';
-		mine = p.get('owner') === 'me';
+		const o = p.get('owner');
+		owner = o === 'me' || o === 'none' ? o : '';
 		attentionOnly = p.get('attention') === '1';
+		showLost = p.get('lost') === '1';
 		since = Math.max(0, Number(p.get('since')) || 0);
 	}
 	readUrl(page.url);
@@ -93,8 +100,9 @@
 			['view', all ? 'list' : view]
 		];
 		if (attentionOnly) q.push(['attention', '1']);
-		if (mine) q.push(['owner', 'me']);
+		if (owner) q.push(['owner', owner]);
 		if (since) q.push(['since', String(since)]);
+		if (showLost) q.push(['lost', '1']);
 		if (search.trim()) q.push(['q', search.trim()]);
 		const href = `/crm?${q.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')}`;
 		crmBack.href = href;
@@ -119,7 +127,8 @@
 		const filters: QueryConstraint[] = [];
 		if (t !== 'all') filters.push(where('type', '==', t), orderBy('createdAt', 'desc'));
 		else {
-			if (mine && uid) filters.push(where('ownerUid', '==', uid));
+			if (owner === 'me' && uid) filters.push(where('ownerUid', '==', uid));
+			if (owner === 'none') filters.push(where('ownerUid', '==', null));
 			if (attentionOnly) {
 				// Since is applied below: one range per query here.
 				const cutoff = Timestamp.fromMillis(Date.now() - staleDays * DAY);
@@ -143,10 +152,14 @@
 
 	const attention = (c: Contact) => attentionDays(c, staleDays);
 	const isNew = (c: Contact) => (toDate(c.createdAt)?.getTime() ?? 0) >= Date.now() - since * DAY;
-	let filtering = $derived(mine || attentionOnly || !!since || !!search.trim());
-	let filtered = $derived(
+	let filtering = $derived(!!owner || attentionOnly || !!since || !!search.trim());
+	/** In a losing final stage (Lost, Declined). */
+	const losing = (c: Contact) =>
+		!!cfg.value?.pipelines[c.type]?.stages.find((s) => s.id === c.stage)?.askReason;
+	let matching = $derived(
 		contacts.filter((c) => {
-			if (mine && c.ownerUid !== $me?.uid) return false;
+			if (owner === 'me' && c.ownerUid !== $me?.uid) return false;
+			if (owner === 'none' && c.ownerUid) return false;
 			if (attentionOnly && attention(c) === null) return false;
 			if (since && !isNew(c)) return false;
 			const q = search.trim().toLowerCase();
@@ -156,8 +169,44 @@
 			);
 		})
 	);
+	let lostCount = $derived(matching.filter(losing).length);
+	let filtered = $derived(showLost ? matching : matching.filter((c) => !losing(c)));
+
+	// Contacts per type, so an empty pipeline's tab shows muted with 0: one count per type, once.
+	// The open tab follows its live list instead (its first contact un-mutes it at once).
+	let typeCounts = $state<Record<string, number>>({});
+	$effect(() => {
+		const types = cfg.value?.types;
+		if (!types) return;
+		untrack(() => {
+			for (const t of types)
+				getCountFromServer(query(collection(db, 'contact'), where('type', '==', t)))
+					.then((r) => (typeCounts[t] = r.data().count))
+					.catch(() => {});
+		});
+	});
+	const countOf = (t: ContactType) =>
+		t === type && loaded && contacts.length < 500 ? contacts.length : typeCounts[t];
+
+	// Bulk owner assignment from the list: ticked rows that are still shown.
+	const selected = new SvelteSet<string>();
+	let chosen = $derived(filtered.filter((c) => selected.has(c.id)).map((c) => c.id));
+	let allChosen = $derived(filtered.length > 0 && chosen.length === filtered.length);
+	function toggleAll(on: boolean) {
+		for (const c of filtered) {
+			if (on) selected.add(c.id);
+			else selected.delete(c.id);
+		}
+	}
+	// Another tab starts with nothing selected.
+	$effect(() => {
+		void type;
+		untrack(() => selected.clear());
+	});
 
 	let stages = $derived(all ? [] : (cfg.value?.pipelines[type]?.stages ?? []));
+	// Losing columns show only with "Show lost".
+	let columns = $derived(stages.filter((s) => showLost || !s.askReason));
 
 	// Losing columns (Lost, Declined) start folded, so the working stages fit the screen.
 	let expanded = $state<Record<string, boolean>>({});
@@ -209,13 +258,19 @@
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			<div class="flex flex-wrap rounded-lg border border-line/70 bg-white p-0.5">
 				{#each config.types as t (t)}
+					{@const n = countOf(t)}
+					{@const empty = n === 0}
 					<button
-						class="rounded-md px-3 py-1 text-sm font-semibold {type === t
+						class="flex items-center gap-1 rounded-md px-3 py-1 text-sm font-semibold {type === t
 							? 'bg-primary-600 text-white'
-							: 'text-ink-soft hover:text-ink'}"
+							: empty
+								? 'text-ink-soft/50 hover:text-ink-soft'
+								: 'text-ink-soft hover:text-ink'}"
+						title={empty ? `No ${config.pipelines[t].plural.toLowerCase()} yet` : undefined}
 						onclick={() => (type = t)}
 					>
 						{config.pipelines[t].plural}
+						{#if empty}<span class="text-[11px] font-normal">0</span>{/if}
 					</button>
 				{/each}
 				<button
@@ -239,9 +294,11 @@
 						bind:value={search}
 					/>
 				</div>
-				<label class="flex items-center gap-1.5 text-sm whitespace-nowrap">
-					<input type="checkbox" class="rounded text-primary-600" bind:checked={mine} /> Mine
-				</label>
+				<select class="input w-auto py-1 pr-8" aria-label="Owner" bind:value={owner}>
+					<option value="">Any owner</option>
+					<option value="me">Mine</option>
+					<option value="none">No owner</option>
+				</select>
 				<label
 					class="flex items-center gap-1.5 text-sm whitespace-nowrap"
 					title="Open, with no activity for {staleDays} days"
@@ -258,6 +315,15 @@
 					/>
 					New ({since || 30} days)
 				</label>
+				{#if lostCount || showLost}
+					<label
+						class="flex items-center gap-1.5 text-sm whitespace-nowrap"
+						title="Lost and Declined contacts"
+					>
+						<input type="checkbox" class="rounded text-primary-600" bind:checked={showLost} />
+						Show lost ({lostCount})
+					</label>
+				{/if}
 				<div class="flex rounded-lg border border-line/70 bg-white p-0.5">
 					<button
 						class="rounded-md p-1.5 disabled:opacity-40 {view === 'board' && !all
@@ -291,6 +357,9 @@
 
 		<FormError message={moveError} />
 		<MoveNotice onerror={(m) => (moveError = m)} />
+		{#if canWrite && (view === 'list' || all)}
+			<BulkAssign ids={chosen} onclear={() => selected.clear()} onerror={(m) => (moveError = m)} />
+		{/if}
 
 		{#if loaded && contacts.length === 0 && !filtering && pipeline}
 			<Empty title="Add your first {pipeline.label.toLowerCase()}">
@@ -307,7 +376,7 @@
 			{/if}
 			<!-- Only the board scrolls sideways, inside itself. -->
 			<div class="flex gap-2 overflow-x-auto pb-4">
-				{#each stages as stage (stage.id)}
+				{#each columns as stage (stage.id)}
 					{@const cards = filtered.filter((c) => c.stage === stage.id)}
 					{#if folded(stage)}
 						<button
@@ -405,6 +474,18 @@
 				<table class="w-full text-sm">
 					<thead class="bg-canvas text-left text-xs text-ink-soft">
 						<tr>
+							{#if canWrite}
+								<th class="w-8 py-2 pl-4">
+									<input
+										type="checkbox"
+										class="rounded text-primary-600"
+										aria-label="Select all shown"
+										checked={allChosen}
+										indeterminate={chosen.length > 0 && !allChosen}
+										onchange={(e) => toggleAll(e.currentTarget.checked)}
+									/>
+								</th>
+							{/if}
 							<th class="px-4 py-2 font-semibold">
 								{type === 'partner' ? 'Organisation' : 'Name'}
 							</th>
@@ -421,7 +502,19 @@
 					<tbody class="divide-y divide-line/40">
 						{#each filtered as c (c.id)}
 							{@const quiet = attention(c)}
-							<tr class="hover:bg-canvas">
+							<tr class="hover:bg-canvas {selected.has(c.id) ? 'bg-primary-50/60' : ''}">
+								{#if canWrite}
+									<td class="w-8 py-2 pl-4">
+										<input
+											type="checkbox"
+											class="rounded text-primary-600"
+											aria-label="Select {contactTitle(c)}"
+											checked={selected.has(c.id)}
+											onchange={(e) =>
+												e.currentTarget.checked ? selected.add(c.id) : selected.delete(c.id)}
+										/>
+									</td>
+								{/if}
 								<td class="px-4 py-2">
 									<a href="/crm/{c.id}" class="font-semibold break-words hover:text-primary-700">
 										{contactTitle(c)}
@@ -465,9 +558,12 @@
 							</tr>
 						{:else}
 							<tr>
-								<td colspan={all ? 7 : 6} class="px-4 py-8 text-center text-ink-soft">
-									{#if !loaded}Loading…{:else if filtering}No contacts match these filters.{:else}No
-										contacts yet.{/if}
+								<td
+									colspan={(all ? 7 : 6) + (canWrite ? 1 : 0)}
+									class="px-4 py-8 text-center text-ink-soft"
+								>
+									{#if !loaded}Loading…{:else if filtering}No contacts match these filters.{:else if lostCount}Only
+										lost contacts here: tick Show lost to see them.{:else}No contacts yet.{/if}
 								</td>
 							</tr>
 						{/each}

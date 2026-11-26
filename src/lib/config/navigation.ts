@@ -21,6 +21,8 @@ export interface NavItem {
 	/** Permission expression for `hasPermission`; omitted = everyone on the team. */
 	permission?: string;
 	adminOnly?: boolean;
+	/** A collection: while it has no documents, the sidebar shows a muted "empty" hint. */
+	emptyWithout?: string;
 }
 
 export interface NavSection {
@@ -36,9 +38,21 @@ export const NAVIGATION: NavSection[] = [
 			{ href: '/crm', label: 'CRM', icon: Users, permission: 'crm.any.read' },
 			{ href: '/tasks', label: 'Tasks', icon: ListChecks, permission: 'crm.any.read' },
 			{ href: '/events', label: 'Events', icon: CalendarDays, permission: 'crm.any.read' },
-			{ href: '/gtm', label: 'Go-to-market', icon: Target, permission: 'crm.any.read' },
+			{
+				href: '/gtm',
+				label: 'Go-to-market',
+				icon: Target,
+				permission: 'crm.any.read',
+				emptyWithout: 'strategy'
+			},
 			{ href: '/reports', label: 'Reports', icon: ChartColumn, permission: 'reports.any.read' },
-			{ href: '/tv', label: 'FLF TV', icon: Clapperboard, permission: 'tv.any.read' },
+			{
+				href: '/tv',
+				label: 'FLF TV',
+				icon: Clapperboard,
+				permission: 'tv.any.read',
+				emptyWithout: 'tvVideo'
+			},
 			{
 				href: '/knowledge',
 				label: 'Knowledge',

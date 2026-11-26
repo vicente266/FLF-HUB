@@ -40,30 +40,31 @@ export async function summary() {
 }
 
 /**
- * The four headline numbers on Home, for one person: their open tasks, their overdue ones (dated
- * only), their open contacts with no activity for STALE_DAYS, and the team's new contacts in 30 days. Four count
- * aggregations.
+ * Home's headline numbers, for one person: their open tasks, their overdue ones (dated only), the
+ * team's new contacts in 30 days, and contacts needing attention (open, no activity for STALE_DAYS,
+ * live as the screens show it; the daily job's flag lags up to a day) for the team, for them and with
+ * no owner. Six count aggregations (one billed read each per 1,000 counted).
  */
 export async function kpis(uid: string) {
 	const since30 = Timestamp.fromMillis(Date.now() - 30 * DAY);
 	const myOpen = crm.tasks.where('assigneeUid', '==', uid).where('done', '==', false);
-	const [newLast30, needsAttention, openTasks, overdue] = await Promise.all([
+	const stale = crm.contacts
+		.where('open', '==', true)
+		.where('lastActivityAt', '<', Timestamp.fromMillis(Date.now() - STALE_DAYS * DAY));
+	const [newLast30, team, mine, noOwner, openTasks, overdue] = await Promise.all([
 		crm.contacts.where('createdAt', '>=', since30).count().get(),
-		// Live, as the screens show it: open and no activity for STALE_DAYS (the daily job's flag
-		// lags up to a day).
-		crm.contacts
-			.where('ownerUid', '==', uid)
-			.where('open', '==', true)
-			.where('lastActivityAt', '<', Timestamp.fromMillis(Date.now() - STALE_DAYS * DAY))
-			.count()
-			.get(),
+		stale.count().get(),
+		stale.where('ownerUid', '==', uid).count().get(),
+		stale.where('ownerUid', '==', null).count().get(),
 		myOpen.count().get(),
 		// A range on dueAt leaves out undated tasks (null), which are never overdue.
 		myOpen.where('dueAt', '<', Timestamp.now()).count().get()
 	]);
 	return {
 		newLast30: newLast30.data().count,
-		needsAttention: needsAttention.data().count,
+		attentionTeam: team.data().count,
+		attentionMine: mine.data().count,
+		attentionNoOwner: noOwner.data().count,
 		openTasks: openTasks.data().count,
 		overdueTasks: overdue.data().count
 	};

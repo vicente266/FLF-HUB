@@ -74,6 +74,29 @@ export const CONNECTORS: Connector[] = [
 		testable: true
 	},
 	{
+		id: 'calendar',
+		name: 'Calendar',
+		category: 'platform',
+		availability: 'live',
+		description:
+			'The team’s Google Calendars: Events → Upcoming lists the next 30 days, with guests matched to CRM contacts by email. Read live (cached 5 minutes), never stored, never changed.',
+		feeds: ['Events (Upcoming)'],
+		secrets: [],
+		settings: [
+			{
+				key: 'calendars',
+				label: 'Calendars',
+				help: 'One Google Calendar id per line; for a person’s calendar that is their email address.',
+				kind: 'list'
+			}
+		],
+		setup: [
+			'In Google Calendar → Settings → the calendar → **Share with specific people**: add 900685987021-compute@developer.gserviceaccount.com with **See all event details**.',
+			'Put the calendar ids here (one per line, e.g. an email address), save, and press Test: it reads each calendar’s next 7 days.'
+		],
+		testable: true
+	},
+	{
 		id: 'checkly',
 		name: 'Checkly',
 		category: 'platform',

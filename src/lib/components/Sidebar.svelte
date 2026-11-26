@@ -3,6 +3,7 @@
 	import { me } from '$lib/stores';
 	import { hasPermission } from '$lib/utils';
 	import { NAVIGATION, type NavItem } from '$lib/config/navigation';
+	import { navCount } from '$lib/helpers/navCounts.svelte';
 	import Logo from './Logo.svelte';
 
 	const visible = (item: NavItem) => {
@@ -46,6 +47,14 @@
 						>
 							<item.icon class="h-4 w-4 shrink-0" />
 							{item.label}
+							{#if item.emptyWithout && navCount(item.emptyWithout) === 0}
+								<span
+									class="ml-auto text-[10px] font-normal text-ink-soft/60"
+									title="Nothing here yet"
+								>
+									empty
+								</span>
+							{/if}
 						</a>
 					</li>
 				{/each}
