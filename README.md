@@ -14,6 +14,7 @@ same architecture as the EBS Hub (`barschool/aihub`).
 | Reports      | `/reports`                      | Funnel per pipeline, sources, KPIs                                                             |
 | Go-to-market | `/gtm`                          | Strategies and the Partners (funds, universities…) we reach out to (docs/gtm.md)               |
 | Knowledge    | `/knowledge`                    | FLF facts and messaging Claude reads before writing (docs/knowledge.md)                        |
+| Skills       | `/skills`                       | Every skill for Claude and agents (FLF TV, Hub, GitHub, Drive), audited (docs/skills.md)       |
 | Events       | `/events`                       | Meetings with contacts, from the calendars via the portal sheet                                |
 | Automations  | `/automations`                  | On/off switches, last run, recent runs; n8n workflows with status                              |
 | Connections  | `/connections`                  | Every integration: status, what it feeds, settings, setup steps, Test                          |

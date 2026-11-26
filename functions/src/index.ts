@@ -22,6 +22,7 @@ import * as claude from './lib/mcp/index';
 import * as knowledge from './lib/knowledge/index';
 import * as portal from './lib/portal/index';
 import * as tv from './lib/tv/index';
+import * as skills from './lib/skills/index';
 
 setGlobalOptions({ maxInstances: 10, region: REGION });
 
@@ -31,6 +32,8 @@ const checklyApiKey = defineSecret('CHECKLY_API_KEY');
 const n8nApiKey = defineSecret('N8N_API_KEY');
 /** Signs the Claude connector's clients and tokens and seals its keys (docs/claude-connector.md). */
 const flfMcpKey = defineSecret('FLF_MCP_KEY');
+/** Read-only GitHub token (Contents: read) for the Skills repos (docs/skills.md). Never logged. */
+const githubSkillsToken = defineSecret('GITHUB_SKILLS_TOKEN');
 
 /**
  * An optional secret's value, or undefined when it is not set up yet. Secret Manager can't store an
@@ -47,10 +50,11 @@ const userLogger = utils.createLogger('user');
 /** Secrets for connection checks, read only inside handlers that declared them. */
 const secrets = (): connections.Secrets => ({
 	checklyApiKey: optional(checklyApiKey),
-	n8nApiKey: optional(n8nApiKey)
+	n8nApiKey: optional(n8nApiKey),
+	githubSkillsToken: optional(githubSkillsToken)
 });
 /** Every secret a connection check reads. */
-const checkSecrets = [checklyApiKey, n8nApiKey];
+const checkSecrets = [checklyApiKey, n8nApiKey, githubSkillsToken];
 
 /*
  * EVERY callable is one `<feature>Action` dispatcher (see dispatch.ts). Add an action to the
@@ -58,7 +62,8 @@ const checkSecrets = [checklyApiKey, n8nApiKey];
  */
 
 export const coreAction = onCall(
-	{ secrets: [flfMcpKey] },
+	// skills.sync reads GitHub and Drive: up to a few minutes on a first import.
+	{ secrets: [flfMcpKey, githubSkillsToken], timeoutSeconds: 300 },
 	dispatch('core', {
 		/** Who the signed-in user is and what they may do; creates their user document on first sign-in. */
 		'user.validate': {
@@ -174,7 +179,23 @@ export const coreAction = onCall(
 		/** Save a skill; the next video uses it. */
 		'tv.skill.save': { permission: 'tv.any.write', handler: tv.actions['skill.save'] },
 		/** Back to the built-in skill. */
-		'tv.skill.reset': { permission: 'tv.any.write', handler: tv.actions['skill.reset'] }
+		'tv.skill.reset': { permission: 'tv.any.write', handler: tv.actions['skill.reset'] },
+		// Skills (docs/skills.md). On coreAction like knowledge.*.
+		/** Sources, audit levels, limits and where each source is set up. */
+		'skills.config.get': { permission: 'skills.any.read', handler: skills.actions['config.get'] },
+		/** Every skill with its audit, without bodies. */
+		'skills.list': { permission: 'skills.any.read', handler: skills.actions.list },
+		/** One skill with its body. */
+		'skills.get': { permission: 'skills.any.read', handler: skills.actions.get },
+		/** Add or edit a skill written in the Hub. */
+		'skills.save': { permission: 'skills.any.write', handler: skills.actions.save },
+		/** Delete a skill written in the Hub. */
+		'skills.delete': { permission: 'skills.any.write', handler: skills.actions.delete },
+		/** Import FLF TV, GitHub and Drive now and audit the list (read only on GitHub and Drive). */
+		'skills.sync': {
+			permission: 'skills.any.write',
+			handler: async () => skills.sync(optional(githubSkillsToken))
+		}
 	})
 );
 
@@ -339,8 +360,8 @@ export const automationsDaily = onSchedule(
  */
 export const claudeMcp = onRequest(
 	{
-		// The tools run other dispatchers' actions (connections:test reads n8n),
-		// so the connector holds those secrets too.
+		// The tools run other dispatchers' actions (connections:test reads n8n and GitHub,
+		// core:skills.sync reads GitHub), so the connector holds those secrets too.
 		secrets: [flfMcpKey, ...checkSecrets],
 		timeoutSeconds: 60,
 		memory: '512MiB',
@@ -357,12 +378,19 @@ export const claudeMcp = onRequest(
 	}
 );
 
-/** Every night: import the portal sheet (read-only on the sheet). */
+/** Every night: import the portal sheet, the Knowledge folder and the skills (all read only). */
 export const portalNightly = onSchedule(
-	{ schedule: '0 3 * * *', timeZone: 'Europe/Madrid', timeoutSeconds: 540, memory: '512MiB' },
+	{
+		schedule: '0 3 * * *',
+		timeZone: 'Europe/Madrid',
+		timeoutSeconds: 540,
+		memory: '512MiB',
+		secrets: [githubSkillsToken]
+	},
 	async () => {
 		await automations.portalSync();
 		await automations.knowledgeSync();
+		await automations.skillsSync(optional(githubSkillsToken));
 	}
 );
 

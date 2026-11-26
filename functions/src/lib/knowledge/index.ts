@@ -320,19 +320,19 @@ const DOC = 'application/vnd.google-apps.document';
 /** What the import can read as text: Google Docs (exported) and plain text or Markdown files. */
 export const READABLE = [DOC, 'text/plain', 'text/markdown', 'text/x-markdown'];
 
-interface DriveFile {
+export interface DriveFile {
 	id: string;
 	name: string;
 	mimeType: string;
 	modifiedTime: string;
 	webViewLink: string;
-	/** The subfolders it sits in, from the Knowledge folder down ([] at the top). */
+	/** The subfolders it sits in, from the listed folder down ([] at the top). */
 	path: string[];
 }
 
 const FOLDER = 'application/vnd.google-apps.folder';
 const SHORTCUT = 'application/vnd.google-apps.shortcut';
-/** How deep the import goes into subfolders (the Knowledge folder is level 0). */
+/** How deep a listing goes into subfolders (the listed folder is level 0). */
 const MAX_DEPTH = 4;
 
 async function drive() {
@@ -345,20 +345,33 @@ async function folderId(): Promise<string> {
 	return String(s?.folderId ?? '').trim() || DEFAULT_FOLDER_ID;
 }
 
-/**
- * The folder's files, its subfolders' included (up to MAX_DEPTH levels), not trashed. Read only.
- * `complete` is false when the listing stopped early: then nothing may be removed for being absent.
- */
-export async function listFolder(): Promise<{
+/** What a Drive folder walk found. */
+export interface FolderListing {
 	folderId: string;
 	files: DriveFile[];
+	/** False when the listing stopped early: then nothing may be removed for being absent. */
 	complete: boolean;
 	/** Shortcuts to folders the Hub can't open (not shared with it), by path. */
 	unshared: string[];
 	/** Subfolders walked (shortcuts to folders included). */
 	folders: number;
-}> {
-	const id = await folderId();
+}
+
+/** The Knowledge folder's files, its subfolders' included. Read only. */
+export async function listFolder(): Promise<FolderListing> {
+	return listDriveFolder(await folderId(), 'Knowledge folder', MAX_ENTRIES);
+}
+
+/**
+ * A Drive folder's files, its subfolders' included (up to MAX_DEPTH levels, shortcuts followed),
+ * not trashed, at most `max`. Read only. `name` is how errors call the folder ("Knowledge folder").
+ * Also used by Skills (docs/skills.md).
+ */
+export async function listDriveFolder(
+	id: string,
+	name: string,
+	max: number
+): Promise<FolderListing> {
 	const client = await drive();
 	// An unshared folder lists as empty, not as an error: look at the folder itself first.
 	try {
@@ -366,7 +379,7 @@ export async function listFolder(): Promise<{
 			url: `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=mimeType&supportsAllDrives=true`
 		});
 		if (f.data.mimeType !== 'application/vnd.google-apps.folder')
-			throw new HttpsError('failed-precondition', 'The Knowledge folder id is not a folder.');
+			throw new HttpsError('failed-precondition', `The ${name} id is not a folder.`);
 	} catch (err) {
 		if (err instanceof HttpsError) throw err;
 		const res = (err as { response?: { status?: number; data?: unknown } }).response;
@@ -378,8 +391,8 @@ export async function listFolder(): Promise<{
 			message =
 				'The Google Drive API is off in the Hub’s Google Cloud project: a developer enables it (APIs & Services → Google Drive API → Enable).';
 		else if (status === 404 || status === 403)
-			message = `The Hub can't see the Knowledge folder (${id}): share that folder with 900685987021-compute@developer.gserviceaccount.com as Viewer, or put the right folder id on Connections.`;
-		else message = `Drive answered ${status ?? 'with an error'} for the Knowledge folder.`;
+			message = `The Hub can't see the ${name} (${id}): share that folder with 900685987021-compute@developer.gserviceaccount.com as Viewer, or put the right folder id on Connections.`;
+		else message = `Drive answered ${status ?? 'with an error'} for the ${name}.`;
 		throw new HttpsError('failed-precondition', message);
 	}
 	const files: DriveFile[] = [];
@@ -437,10 +450,10 @@ export async function listFolder(): Promise<{
 				} else complete = false;
 			}
 			pageToken = res.data.nextPageToken ?? '';
-			if (files.length >= MAX_ENTRIES) {
+			if (files.length >= max) {
 				return {
 					folderId: id,
-					files: files.slice(0, MAX_ENTRIES),
+					files: files.slice(0, max),
 					complete: false,
 					unshared,
 					folders: seen.size - 1
@@ -451,7 +464,8 @@ export async function listFolder(): Promise<{
 	return { folderId: id, files, complete, unshared, folders: seen.size - 1 };
 }
 
-async function textOf(f: DriveFile): Promise<string> {
+/** A readable file's text (a Google Doc exported as plain text). Read only. */
+export async function textOf(f: DriveFile): Promise<string> {
 	const client = await drive();
 	const url =
 		f.mimeType === DOC

@@ -145,6 +145,55 @@ export const CONNECTORS: Connector[] = [
 		testable: true
 	},
 	{
+		id: 'skills-github',
+		name: 'Skills on GitHub',
+		category: 'ai',
+		availability: 'live',
+		description:
+			'GitHub repos whose skill files (SKILL.md, .claude/skills, .claude/commands, skills/) are listed and audited on the Skills page. Read only, with a read-only token, every night and when you press Sync now.',
+		feeds: ['Skills'],
+		secrets: ['GITHUB_SKILLS_TOKEN'],
+		settings: [
+			{
+				key: 'repos',
+				label: 'Repos',
+				help: 'One per line, as owner/repo, e.g. `vicente266/FLF`.',
+				kind: 'list'
+			}
+		],
+		setup: [
+			'GitHub → Settings → Developer settings → Fine-grained tokens → Generate: the owner of the repos as resource owner, only those repos, and one permission: Repository → **Contents: Read-only** (nothing else).',
+			'Developer only: `firebase functions:secrets:set GITHUB_SKILLS_TOKEN` (paste the token), then deploy.',
+			'Put the repos here, one per line (owner/repo), and save.',
+			'Press Test connection: every repo must be reachable. Skills → Sync now imports them; it runs again every night.'
+		],
+		testable: true
+	},
+	{
+		id: 'skills-drive',
+		name: 'Skills folder (Drive)',
+		category: 'ai',
+		availability: 'live',
+		description:
+			'A Google Drive folder whose Markdown, text and Google Docs files (subfolders and shortcuts included) are listed and audited on the Skills page. The Hub only reads it, every night and when you press Sync now.',
+		feeds: ['Skills'],
+		secrets: [],
+		settings: [
+			{
+				key: 'folderId',
+				label: 'Folder id',
+				help: 'The part after /folders/ in the folder link.',
+				kind: 'text'
+			}
+		],
+		setup: [
+			'Share the folder with the Cloud Functions service account (900685987021-compute@developer.gserviceaccount.com) as **Viewer**.',
+			'Put its folder id here and save.',
+			'Press Test connection: it lists the files it can import. Skills → Sync now imports them; it runs again every night.'
+		],
+		testable: true
+	},
+	{
 		id: 'claude-connector',
 		name: 'Claude connector',
 		category: 'ai',

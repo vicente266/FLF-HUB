@@ -81,6 +81,18 @@ export const AUTOMATIONS: AutomationDef[] = [
 		defaultEnabled: true,
 		confirmOff:
 			'The Knowledge folder stops being imported every night: changes in Drive won’t reach Claude until it is on again (Sync now on Knowledge still works).'
+	},
+	{
+		id: 'skills-sync',
+		name: 'Import and audit the skills',
+		description:
+			'Every night, lists the skills of FLF TV, the GitHub repos and the Skills folder in Drive on the Skills page and audits each one (a skill gone from a source read whole leaves the list). Read only on GitHub and Drive.',
+		trigger: 'schedule',
+		schedule: 'Every day at 03:00 (Madrid)',
+		uses: ['skills-github', 'skills-drive'],
+		defaultEnabled: true,
+		confirmOff:
+			'The skills stop being imported and audited every night: changes in GitHub and Drive won’t show on Skills until it is on again (Sync now on Skills still works).'
 	}
 ];
 

@@ -34,6 +34,10 @@ service cloud.firestore {
       allow read: if request.auth != null && (request.auth.token.role == 'admin'
         || (team() && resource.data.audience in ['external', 'internal']));
     }
+    // Skills (FLF TV, Hub, GitHub, Drive) with their audit; written by core:skills.* only.
+    match /skill/{id} {
+      allow read: if team();
+    }
     // Meetings imported from the portal sheet's Events tab.
     match /event/{id} {
       allow read: if team();

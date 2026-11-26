@@ -71,6 +71,8 @@ jobs:
       - run: npm install -g firebase-tools@15
       - name: Portal import against the Firestore emulator
         run: npm test
+      - name: Skills audit (pure, no emulator)
+        run: npm run test:skills
 
   tv-worker:
     name: FLF TV worker (types and self-test)

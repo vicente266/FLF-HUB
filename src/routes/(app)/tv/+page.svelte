@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { beforeNavigate } from '$app/navigation';
+	import { page } from '$app/state';
 	import { collection, query, orderBy, limit, where } from 'firebase/firestore';
 	import Upload from '@lucide/svelte/icons/upload';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
@@ -27,7 +28,11 @@
 		['skill', 'Skill'],
 		['outcome', 'Outcome']
 	] as const;
-	let tab = $state<'upload' | 'skill' | 'outcome'>('upload');
+	// `?tab=skill` opens a tab directly (Skills links to the Skill tab).
+	const asked = page.url.searchParams.get('tab');
+	let tab = $state<'upload' | 'skill' | 'outcome'>(
+		TABS.find(([value]) => value === asked)?.[0] ?? 'upload'
+	);
 	let error = $state<string | null>(null);
 
 	// ---- videos, the selected one, its clips. `updatedAt` is the worker's heartbeat.

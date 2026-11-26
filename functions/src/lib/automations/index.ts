@@ -258,6 +258,20 @@ export async function knowledgeSync() {
 	});
 }
 
+/** Nightly: import every skill source and audit the list. `token` is GITHUB_SKILLS_TOKEN. */
+export async function skillsSync(token: string | undefined) {
+	await run('skills-sync', async () => {
+		const skills = await import('../skills/index.js');
+		const r = await skills.sync(token);
+		const line = (name: string, s: typeof r.github) =>
+			s.configured
+				? `${name} ${s.files} files (${s.added} new, ${s.updated} updated, ${s.removed} removed${s.skipped.length ? `, ${s.skipped.length} not read` : ''})`
+				: `${name} not set up`;
+		// Recorded on a quiet night too, so Health can tell a stopped schedule from a quiet one.
+		return `${line('GitHub', r.github)}; ${line('Drive', r.drive)}`;
+	});
+}
+
 export async function portalSync() {
 	await run('portal-sync', async () => {
 		const portal = await import('../portal/index.js');

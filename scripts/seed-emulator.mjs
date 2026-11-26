@@ -18,7 +18,7 @@ const GROUPS = {
 	default: {
 		name: 'Default',
 		description: 'Everyone who signs in.',
-		permissions: ['crm.any.read', 'health.any.read']
+		permissions: ['crm.any.read', 'health.any.read', 'skills.any.read']
 	},
 	sherpas: {
 		name: 'Sherpas',
@@ -29,7 +29,8 @@ const GROUPS = {
 			'reports.any.read',
 			'automations.any.read',
 			'connections.any.read',
-			'health.any.read'
+			'health.any.read',
+			'skills.any.read'
 		]
 	},
 	ops: {
@@ -49,7 +50,9 @@ const GROUPS = {
 			'wellbeing.any.read',
 			'wealth.any.read',
 			'tv.any.read',
-			'tv.any.write'
+			'tv.any.write',
+			'skills.any.read',
+			'skills.any.write'
 		]
 	}
 };
@@ -254,4 +257,101 @@ await db.doc('tvClip/c2').set({
 	endPause: 0,
 	renderUrl: null
 });
+// Skills: one per source plus one with audit problems, audited by the real code (functions/lib).
+const auditPath = new URL('../functions/lib/lib/skills/audit.js', import.meta.url);
+let skillAudit = null;
+try {
+	skillAudit = require(auditPath.pathname);
+} catch {
+	console.warn('Skills not seeded: build the functions first (cd functions && npm run build).');
+}
+if (skillAudit) {
+	const { describe, auditSkill, relativeLinks, recompute } = skillAudit;
+	const repoPaths = new Set([
+		'.claude/skills/deploy-hub/SKILL.md',
+		'.claude/skills/deploy-hub/checklist.md',
+		'.claude/commands/standup.md'
+	]);
+	const SKILLS = [
+		{
+			id: 'hub-demo-intro',
+			source: 'hub',
+			location: 'Hub',
+			url: '',
+			name: 'fellow-intro-email',
+			description: 'Use when writing the first email to a founder who applied to the Fellowship.',
+			text: '# Steps\n\n1. Read their application in the CRM.\n2. Thank them, say what happens next.\n3. Sign as their Sherpa.',
+			days: 3,
+			by: 'Vicente Admin'
+		},
+		{
+			id: 'github-demo-deploy',
+			source: 'github',
+			location: 'vicente266/FLF/.claude/skills/deploy-hub/SKILL.md',
+			url: 'https://github.com/vicente266/FLF/blob/main/.claude/skills/deploy-hub/SKILL.md',
+			path: '.claude/skills/deploy-hub/SKILL.md',
+			text: '---\nname: deploy-hub\ndescription: Use when deploying the FLF Hub to production after the checks pass.\n---\n\n# Deploy the Hub\n\nFollow [the checklist](checklist.md), then see [rollback](rollback.md).\n\n```sh\nnpm run build\n```',
+			days: 12,
+			by: 'GitHub import'
+		},
+		{
+			id: 'drive-demo-pitch',
+			source: 'drive',
+			location: 'Skills folder / Pitch / Investor pitch',
+			url: 'https://drive.google.com',
+			text: '---\nname: investor-pitch\ndescription: "Use when drafting a pitch for a fund or a university: the long game, the Pledge, Sherpas."\n---\n\n# Investor pitch\n\n- Open with the **long game**.\n- Explain the Pledge in one sentence.\n- End with a meeting request.',
+			days: 40,
+			by: 'Drive import'
+		},
+		{
+			id: 'github-demo-standup',
+			source: 'github',
+			location: 'vicente266/FLF-Content/.claude/commands/standup.md',
+			url: 'https://github.com/vicente266/FLF-Content/blob/main/.claude/commands/standup.md',
+			path: '.claude/commands/standup.md',
+			text: '---\nname: fellow-intro-email\ndescription: Writes: the standup\n---\nSummarise yesterday.',
+			days: 300,
+			by: 'GitHub import'
+		}
+	];
+	const docs = SKILLS.map((k) => {
+		const d =
+			k.source === 'hub'
+				? { name: k.name, description: k.description, frontMatterError: null, body: k.text }
+				: describe(k.text);
+		const links = k.path ? relativeLinks(d.body, k.path) : undefined;
+		const updatedAt = new Date(Date.now() - k.days * DAY);
+		return {
+			id: k.id,
+			data: {
+				name: d.name,
+				nameKey: d.name.trim().toLowerCase(),
+				description: d.description,
+				body: k.text,
+				truncated: false,
+				source: k.source,
+				location: k.location,
+				url: k.url,
+				updatedAt: admin.firestore.Timestamp.fromDate(updatedAt),
+				importedAt: ago(0),
+				updatedBy: k.by,
+				audit: auditSkill({ ...d, updatedAt, ...(links ? { links, repoPaths } : {}) }),
+				...(k.path
+					? { repo: k.location.split('/').slice(0, 2).join('/'), path: k.path, sha: 'demo', links }
+					: {})
+			}
+		};
+	});
+	const changed = recompute(
+		docs.map((x) => ({
+			id: x.id,
+			name: x.data.name,
+			location: x.data.location,
+			audit: x.data.audit,
+			updatedAt: x.data.updatedAt.toDate()
+		}))
+	);
+	for (const x of docs)
+		await db.doc(`skill/${x.id}`).set({ ...x.data, audit: changed.get(x.id) ?? x.data.audit });
+}
 console.log('Seeded. Sign in as admin@foundersforlifefellowship.com / flf-local-123');

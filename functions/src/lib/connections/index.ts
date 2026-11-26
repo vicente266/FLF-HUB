@@ -42,6 +42,10 @@ const ERROR_HINT: Record<string, string> = {
 	n8n: 'The Hub can’t reach n8n. Try Test connection again in a few minutes; if it keeps failing, a developer should check the n8n API key.',
 	'knowledge-folder':
 		'The Hub can’t open the Knowledge folder. Check the folder id and that the folder is shared with the Hub as Viewer, then press Test connection.',
+	'skills-github':
+		'The Hub can’t reach GitHub. Try Test connection again in a few minutes; if it keeps failing, a developer should check the GitHub token.',
+	'skills-drive':
+		'The Hub can’t open the Skills folder. Check the folder id and that the folder is shared with the Hub as Viewer, then press Test connection.',
 	'claude-connector':
 		'The Claude connector doesn’t answer. A developer should check that it is deployed.'
 };
@@ -50,6 +54,7 @@ const ERROR_HINT: Record<string, string> = {
 export interface Secrets {
 	checklyApiKey?: string;
 	n8nApiKey?: string;
+	githubSkillsToken?: string;
 }
 
 /** `Name | id` lines of a list setting. */
@@ -322,6 +327,15 @@ async function check(id: string, secrets: Secrets): Promise<CheckResult> {
 					status: 'ok',
 					detail: `${files.length} files in ${folders + 1} folders (the Knowledge folder and ${folders} subfolders), ${readable} importable (Google Docs, text, Markdown).`
 				};
+			}
+			case 'skills-github': {
+				// Lazy: skills is not needed by the other checks.
+				const skills = await import('../skills/index.js');
+				return await skills.checkGithub(secrets.githubSkillsToken);
+			}
+			case 'skills-drive': {
+				const skills = await import('../skills/index.js');
+				return await skills.checkDrive();
 			}
 			case 'claude-connector': {
 				if (!CONNECTOR_URL) {

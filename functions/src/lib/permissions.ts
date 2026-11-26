@@ -15,6 +15,9 @@ export const PERMISSIONS = [
 	// The Knowledge list (FLF facts and messaging Claude reads before writing).
 	'knowledge.any.read',
 	'knowledge.any.write',
+	// Skills: every skill file for Claude and agents, with its audit.
+	'skills.any.read',
+	'skills.any.write',
 	// Health data (PERMA wellbeing). Never served to Claude.
 	'wellbeing.any.read',
 	// Fellows' income and financial reports.
@@ -106,6 +109,17 @@ const INFO: Record<Permission, Omit<PermissionInfo, 'id'>> = {
 		app: 'Knowledge',
 		label: 'Knowledge — edit and approve',
 		help: 'Add, edit, approve and delete entries, and import the Drive folder.'
+	},
+	'skills.any.read': {
+		app: 'Skills',
+		label: 'Skills — view',
+		help: 'See every skill (FLF TV, Hub, GitHub, Drive) and its audit.',
+		opens: true
+	},
+	'skills.any.write': {
+		app: 'Skills',
+		label: 'Skills — write and import',
+		help: 'Add, edit and delete skills written in the Hub, and import the sources now.'
 	},
 	'wellbeing.any.read': {
 		app: 'Wellbeing',
