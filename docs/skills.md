@@ -10,7 +10,7 @@ same table page, actions on `coreAction`.
 | Source     | What is listed                                                                                                                    | Edited                                                                            |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | **FLF TV** | The Clipping and Brand skills the TV worker reads (`tvSkill`, docs/flf-tv.md), as saved or built in.                              | In FLF TV → Skill (`/tv?tab=skill`). Read only here.                              |
-| **Hub**    | Skills written on the Skills page: name, description, body (Markdown).                                                            | On the Skills page (Add skill, Edit, Delete), or by Claude with `flf_save_skill`. |
+| **Hub**    | Skills written in Knowledge → Skills: name, description, body (Markdown).                                                         | On the Skills page (Add skill, Edit, Delete), or by Claude with `flf_save_skill`. |
 | **GitHub** | In each listed repo's default branch: `**/SKILL.md`, `.claude/skills/**/*.md`, `.claude/commands/*.md`, `skills/**/*.md`.         | In GitHub. Read only: the Hub uses a read-only token and only GET requests.       |
 | **Drive**  | Markdown, text and Google Docs in the Skills folder, its subfolders (four levels) and shortcuts, as the Knowledge folder is read. | In Drive. Read only.                                                              |
 
@@ -36,7 +36,7 @@ reads them through `core:skills.config.get`.
 
 ## Import (`core:skills.sync`)
 
-**Sync now** on the Skills page, `flf_sync_skills`, and the `skills-sync` automation every night at
+**Sync now** in Knowledge → Skills, `flf_sync_skills`, and the `skills-sync` automation every night at
 03:00 (in `portalNightly`, after the portal sheet and Knowledge).
 
 - **FLF TV:** the two skills are rewritten only when the TV skill changed (its version, or a reset).

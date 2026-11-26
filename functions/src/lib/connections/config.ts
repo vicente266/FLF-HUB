@@ -150,7 +150,7 @@ export const CONNECTORS: Connector[] = [
 		category: 'ai',
 		availability: 'live',
 		description:
-			'GitHub repos whose skill files (SKILL.md, .claude/skills, .claude/commands, skills/) are listed and audited on the Skills page. Read only, with a read-only token, every night and when you press Sync now.',
+			'GitHub repos whose skill files (SKILL.md, .claude/skills, .claude/commands, skills/) are listed and audited in Knowledge → Skills. Read only, with a read-only token, every night and when you press Sync now.',
 		feeds: ['Skills'],
 		secrets: ['GITHUB_SKILLS_TOKEN'],
 		settings: [
@@ -175,7 +175,7 @@ export const CONNECTORS: Connector[] = [
 		category: 'ai',
 		availability: 'live',
 		description:
-			'A Google Drive folder whose Markdown, text and Google Docs files (subfolders and shortcuts included) are listed and audited on the Skills page. The Hub only reads it, every night and when you press Sync now.',
+			'A Google Drive folder whose Markdown, text and Google Docs files (subfolders and shortcuts included) are listed and audited in Knowledge → Skills. The Hub only reads it, every night and when you press Sync now.',
 		feeds: ['Skills'],
 		secrets: [],
 		settings: [

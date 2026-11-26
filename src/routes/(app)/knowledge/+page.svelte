@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
+	import SkillsPanel from '$lib/components/skills/SkillsPanel.svelte';
 	import { onMount } from 'svelte';
 	import { collection, query, orderBy, limit, where } from 'firebase/firestore';
 	import Plus from '@lucide/svelte/icons/plus';
@@ -23,7 +26,19 @@
 	import FormError from '$lib/components/shared/FormError.svelte';
 	import Empty from '$lib/components/shared/Empty.svelte';
 
-	setTitle('Knowledge', 'What Claude knows about FLF, and how it uses each entry');
+	setTitle('Knowledge', 'What Claude knows about FLF, and the skills it and the agents use');
+
+	// Two tabs: the knowledge entries and the skills; the tab is kept in the address (?tab=skills).
+	const canSkills = hasPermission('skills.any.read');
+	let tab = $derived(
+		canSkills && page.url.searchParams.get('tab') === 'skills' ? 'skills' : 'knowledge'
+	);
+	function openTab(t: 'knowledge' | 'skills') {
+		const url = new URL(page.url);
+		if (t === 'skills') url.searchParams.set('tab', 'skills');
+		else url.searchParams.delete('tab');
+		goto(url, { replaceState: true, noScroll: true, keepFocus: true });
+	}
 
 	const canWrite = hasPermission('knowledge.any.write');
 	let entries = $state<KnowledgeEntry[]>([]);
@@ -274,283 +289,309 @@
 	};
 </script>
 
-<div class="mx-auto max-w-7xl space-y-4">
-	<FormError message={error} />
-
-	<!-- Summary, source and actions on one line. -->
-	<div class="flex flex-wrap items-end justify-between gap-4">
-		<div class="flex flex-wrap items-baseline gap-6">
-			<span>
-				<span class="text-3xl font-bold">{stats.total}</span>
-				{stats.total === 1 ? 'document' : 'documents'}
-			</span>
-			<span><span class="text-3xl font-bold text-success">{stats.approved}</span> approved</span>
-			<span><span class="text-3xl font-bold">{stats.draft}</span> draft</span>
-			{#if stats.review}<span>
-					<span class="text-3xl font-bold text-warning">{stats.review}</span> review due
-				</span>{/if}
-			<span class="text-xs text-ink-soft">
-				Claude: {counts.always} always · {counts.relevant} when relevant · {counts.off} off
-			</span>
-		</div>
-		<div class="flex flex-wrap items-center gap-2 text-xs">
-			<span class="flex items-center gap-1.5 text-ink-soft">
-				<FolderOpen class="h-3.5 w-3.5" />
-				{#if folder}<a
-						href={folder.url}
-						target="_blank"
-						rel="noopener noreferrer"
-						class="text-primary-700 hover:underline"
-					>
-						Knowledge folder in Drive
-					</a>{:else}Knowledge folder{/if} · imported every night
-			</span>
-			{#if stats.noUseWhen && canWrite}
-				<button
-					class="font-semibold text-warning hover:underline"
-					onclick={() => (statusFilter = 'nouse')}
-					title="Entries without a Use when line: Claude can't tell when to read them"
-				>
-					{stats.noUseWhen} without “Use when”
-				</button>
-			{/if}
-			{#if canWrite}
-				<button class="btn-ghost text-xs" disabled={syncing} onclick={sync}>
-					<RefreshCw class="h-3.5 w-3.5 {syncing ? 'animate-spin' : ''}" />
-					{syncing ? 'Importing…' : 'Sync now'}
-				</button>
-			{/if}
-			<button class="btn-ghost text-xs" onclick={showClaude}>What Claude reads</button>
-			{#if canWrite}
-				<button class="btn-primary text-xs" onclick={() => edit(null)}>
-					<Plus class="h-4 w-4" /> Add entry
-				</button>
-			{/if}
-		</div>
+{#if canSkills}
+	<div
+		class="mx-auto mb-4 flex w-fit max-w-7xl rounded-lg border border-line/70 bg-white p-0.5"
+		role="tablist"
+	>
+		{#each [['knowledge', 'Knowledge'], ['skills', 'Skills']] as [value, label] (value)}
+			<button
+				role="tab"
+				aria-selected={tab === value}
+				class="rounded-md px-4 py-1.5 text-sm font-semibold {tab === value
+					? 'bg-primary-600 text-white'
+					: 'text-ink-soft'}"
+				onclick={() => openTab(value as 'knowledge' | 'skills')}
+			>
+				{label}
+			</button>
+		{/each}
 	</div>
-	{#if syncResult}<p class="text-xs text-ink">{syncResult}</p>{/if}
+{/if}
 
-	<!-- Filters. -->
-	<div class="flex flex-wrap items-center gap-2">
-		<input
-			class="input w-72"
-			placeholder="Search title, use when, text or topic"
-			bind:value={search}
-		/>
-		<select class="input w-auto pr-9" bind:value={typeFilter} aria-label="Type">
-			<option value="">All types</option>
-			{#each types as t (t.id)}<option value={t.id}>{t.label}</option>{/each}
-		</select>
-		<select class="input w-auto pr-9" bind:value={audienceFilter} aria-label="Audience">
-			<option value="">Any audience</option>
-			{#each audiences as a (a.id)}<option value={a.id}>{a.label}</option>{/each}
-		</select>
-		<select class="input w-auto pr-9" bind:value={statusFilter} aria-label="Status">
-			<option value="">Any status</option>
-			<option value="approved">Approved</option>
-			<option value="draft">Draft</option>
-			<option value="review">Review due</option>
-			<option value="nouse">No “Use when”</option>
-		</select>
-		<select class="input w-auto pr-9" bind:value={useFilter} aria-label="How Claude uses it">
-			<option value="">Any use by Claude</option>
-			{#each uses as u (u.id)}<option value={u.id}>{u.label}</option>{/each}
-		</select>
-		<label class="flex items-center gap-1.5 text-sm text-ink-soft">
-			<input type="checkbox" bind:checked={showExpired} /> Show expired ({expired.length})
-		</label>
-	</div>
+{#if tab === 'skills'}
+	<SkillsPanel />
+{:else}
+	<div class="mx-auto max-w-7xl space-y-4">
+		<FormError message={error} />
 
-	<section class="overflow-x-auto card">
-		{#if loading}
-			<p class="px-4 py-4 text-sm text-ink-soft">Loading…</p>
-		{:else if !entries.length}
-			<div class="px-4 py-2">
-				<Empty title="No knowledge yet">
-					Add what Claude should know (the Fellowship, the Pledge, the pitch for funds and
-					universities, current offers), or put documents in the Knowledge folder and press Sync
-					now.
-				</Empty>
+		<!-- Summary, source and actions on one line. -->
+		<div class="flex flex-wrap items-end justify-between gap-4">
+			<div class="flex flex-wrap items-baseline gap-6">
+				<span>
+					<span class="text-3xl font-bold">{stats.total}</span>
+					{stats.total === 1 ? 'document' : 'documents'}
+				</span>
+				<span><span class="text-3xl font-bold text-success">{stats.approved}</span> approved</span>
+				<span><span class="text-3xl font-bold">{stats.draft}</span> draft</span>
+				{#if stats.review}<span>
+						<span class="text-3xl font-bold text-warning">{stats.review}</span> review due
+					</span>{/if}
+				<span class="text-xs text-ink-soft">
+					Claude: {counts.always} always · {counts.relevant} when relevant · {counts.off} off
+				</span>
 			</div>
-		{:else}
-			<table class="w-full text-sm">
-				<thead>
-					<tr class="border-b border-line/60 text-left text-xs font-semibold text-ink-soft">
-						<th class="px-4 py-2">Document</th>
-						<th class="px-3 py-2">
-							<button
-								class="font-semibold {sortBy === 'rank' ? 'text-ink' : ''}"
-								title="Precedence: when two entries disagree, the type higher in this order wins"
-								onclick={() => (sortBy = 'rank')}
-							>
-								Type{sortBy === 'rank' ? ' ↑' : ''}
-							</button>
-						</th>
-						<th class="px-3 py-2">Audience</th>
-						<th class="px-3 py-2">Claude</th>
-						<th class="px-3 py-2">Last approval</th>
-						<th class="px-3 py-2">
-							<button
-								class="font-semibold {sortBy === 'updated' ? 'text-ink' : ''}"
-								onclick={() => (sortBy = 'updated')}
-							>
-								Last updated{sortBy === 'updated' ? ' ↓' : ''}
-							</button>
-						</th>
-						<th class="px-3 py-2"><span class="sr-only">Actions</span></th>
-					</tr>
-				</thead>
-				<tbody class="divide-y divide-line/40">
-					{#each rows as e (e.id)}
-						<tr class="align-top {isExpired(e) || useOf(e) === 'off' ? 'opacity-60' : ''}">
-							<td class="max-w-xl px-4 py-3">
+			<div class="flex flex-wrap items-center gap-2 text-xs">
+				<span class="flex items-center gap-1.5 text-ink-soft">
+					<FolderOpen class="h-3.5 w-3.5" />
+					{#if folder}<a
+							href={folder.url}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="text-primary-700 hover:underline"
+						>
+							Knowledge folder in Drive
+						</a>{:else}Knowledge folder{/if} · imported every night
+				</span>
+				{#if stats.noUseWhen && canWrite}
+					<button
+						class="font-semibold text-warning hover:underline"
+						onclick={() => (statusFilter = 'nouse')}
+						title="Entries without a Use when line: Claude can't tell when to read them"
+					>
+						{stats.noUseWhen} without “Use when”
+					</button>
+				{/if}
+				{#if canWrite}
+					<button class="btn-ghost text-xs" disabled={syncing} onclick={sync}>
+						<RefreshCw class="h-3.5 w-3.5 {syncing ? 'animate-spin' : ''}" />
+						{syncing ? 'Importing…' : 'Sync now'}
+					</button>
+				{/if}
+				<button class="btn-ghost text-xs" onclick={showClaude}>What Claude reads</button>
+				{#if canWrite}
+					<button class="btn-primary text-xs" onclick={() => edit(null)}>
+						<Plus class="h-4 w-4" /> Add entry
+					</button>
+				{/if}
+			</div>
+		</div>
+		{#if syncResult}<p class="text-xs text-ink">{syncResult}</p>{/if}
+
+		<!-- Filters. -->
+		<div class="flex flex-wrap items-center gap-2">
+			<input
+				class="input w-72"
+				placeholder="Search title, use when, text or topic"
+				bind:value={search}
+			/>
+			<select class="input w-auto pr-9" bind:value={typeFilter} aria-label="Type">
+				<option value="">All types</option>
+				{#each types as t (t.id)}<option value={t.id}>{t.label}</option>{/each}
+			</select>
+			<select class="input w-auto pr-9" bind:value={audienceFilter} aria-label="Audience">
+				<option value="">Any audience</option>
+				{#each audiences as a (a.id)}<option value={a.id}>{a.label}</option>{/each}
+			</select>
+			<select class="input w-auto pr-9" bind:value={statusFilter} aria-label="Status">
+				<option value="">Any status</option>
+				<option value="approved">Approved</option>
+				<option value="draft">Draft</option>
+				<option value="review">Review due</option>
+				<option value="nouse">No “Use when”</option>
+			</select>
+			<select class="input w-auto pr-9" bind:value={useFilter} aria-label="How Claude uses it">
+				<option value="">Any use by Claude</option>
+				{#each uses as u (u.id)}<option value={u.id}>{u.label}</option>{/each}
+			</select>
+			<label class="flex items-center gap-1.5 text-sm text-ink-soft">
+				<input type="checkbox" bind:checked={showExpired} /> Show expired ({expired.length})
+			</label>
+		</div>
+
+		<section class="overflow-x-auto card">
+			{#if loading}
+				<p class="px-4 py-4 text-sm text-ink-soft">Loading…</p>
+			{:else if !entries.length}
+				<div class="px-4 py-2">
+					<Empty title="No knowledge yet">
+						Add what Claude should know (the Fellowship, the Pledge, the pitch for funds and
+						universities, current offers), or put documents in the Knowledge folder and press Sync
+						now.
+					</Empty>
+				</div>
+			{:else}
+				<table class="w-full text-sm">
+					<thead>
+						<tr class="border-b border-line/60 text-left text-xs font-semibold text-ink-soft">
+							<th class="px-4 py-2">Document</th>
+							<th class="px-3 py-2">
 								<button
-									type="button"
-									class="text-left font-semibold hover:text-primary-700"
-									title="Open the full text"
-									onclick={() => open(e)}
+									class="font-semibold {sortBy === 'rank' ? 'text-ink' : ''}"
+									title="Precedence: when two entries disagree, the type higher in this order wins"
+									onclick={() => (sortBy = 'rank')}
 								>
-									{e.label || firstLine(e)}
+									Type{sortBy === 'rank' ? ' ↑' : ''}
 								</button>
-								<p class="mt-0.5 line-clamp-2 text-xs text-ink-soft">{excerpt(e)}</p>
-								{#if e.useWhen}
-									<div class="mt-0.5 text-ink">{e.useWhen}</div>
-								{:else if canWrite}
+							</th>
+							<th class="px-3 py-2">Audience</th>
+							<th class="px-3 py-2">Claude</th>
+							<th class="px-3 py-2">Last approval</th>
+							<th class="px-3 py-2">
+								<button
+									class="font-semibold {sortBy === 'updated' ? 'text-ink' : ''}"
+									onclick={() => (sortBy = 'updated')}
+								>
+									Last updated{sortBy === 'updated' ? ' ↓' : ''}
+								</button>
+							</th>
+							<th class="px-3 py-2"><span class="sr-only">Actions</span></th>
+						</tr>
+					</thead>
+					<tbody class="divide-y divide-line/40">
+						{#each rows as e (e.id)}
+							<tr class="align-top {isExpired(e) || useOf(e) === 'off' ? 'opacity-60' : ''}">
+								<td class="max-w-xl px-4 py-3">
 									<button
-										class="mt-0.5 block text-left text-xs text-warning hover:underline"
-										onclick={() => edit(e)}
+										type="button"
+										class="text-left font-semibold hover:text-primary-700"
+										title="Open the full text"
+										onclick={() => open(e)}
 									>
-										Add “Use when…”: Claude can't tell when to read it
+										{e.label || firstLine(e)}
 									</button>
-								{/if}
-								<div
-									class="mt-1 flex flex-wrap items-center gap-x-2 font-mono text-xs text-ink-soft"
-								>
-									{#if e.source === 'drive'}
-										{#if e.url}<a
-												href={e.url}
-												target="_blank"
-												rel="noopener noreferrer"
-												class="inline-flex items-center gap-1 hover:text-primary-700"
-											>
-												Drive{#if e.topics?.length}/{e.topics[0]}{/if}
-												<ExternalLink class="h-3 w-3" />
-											</a>{:else}Drive{/if}
-										{#if e.truncated}· cut at 50,000 characters{/if}
-									{:else}
-										Hub
-									{/if}
-									{#each (e.topics ?? []).slice(e.source === 'drive' ? 1 : 0) as t (t)}
-										<span>#{t}</span>
-									{/each}
-									{#if e.expiredAt}
-										<span class={isExpired(e) ? 'text-danger' : 'text-warning'}>
-											{isExpired(e) ? 'expired' : 'until'}
-											{day(e.expiredAt)}
-										</span>
-									{/if}
-								</div>
-							</td>
-							<td class="px-3 py-3 whitespace-nowrap">
-								{types[typeIndex(e)]?.label ?? 'Other'}
-							</td>
-							<td class="px-3 py-3">
-								<span
-									class="rounded px-1.5 py-0.5 text-xs font-semibold {e.audience === 'restricted'
-										? 'bg-danger/10 text-danger'
-										: e.audience === 'external'
-											? 'bg-primary-50 text-primary-700'
-											: 'bg-canvas text-ink-soft'}"
-								>
-									{e.audience === 'restricted' ? 'admins only' : (e.audience ?? 'internal')}
-								</span>
-							</td>
-							<td class="px-3 py-3">
-								{#if canWrite && uses.length}
-									<select
-										class="rounded-md border border-line bg-white py-1 pr-8 pl-2 text-xs font-semibold focus:ring-focus {USE_TONE[
-											useOf(e)
-										]}"
-										title="How Claude uses it"
-										disabled={savingUse === e.id}
-										value={useOf(e)}
-										onchange={(ev) => setUse(e, ev.currentTarget.value)}
-									>
-										{#each uses as u (u.id)}<option
-												value={u.id}
-												disabled={u.id === 'always' && !approved(e)}
-												title={u.id === 'always' && !approved(e) ? 'Approve it first' : u.help}
-											>
-												{u.label}
-											</option>{/each}
-									</select>
-								{:else}
-									<span class="text-xs font-semibold {USE_TONE[useOf(e)]}">
-										{uses.find((u) => u.id === useOf(e))?.label ?? useOf(e)}
-									</span>
-								{/if}
-							</td>
-							<td class="px-3 py-3 whitespace-nowrap">
-								{#if approved(e)}
-									<div class="text-success">{e.approvedOn ? day(e.approvedOn) : 'Approved'}</div>
-									<div class="text-xs text-ink-soft">{e.approvedBy}</div>
-									{#if reviewDue(e)}
-										<div class="text-xs font-semibold text-warning">Review due</div>
-										{#if canWrite}<button
-												class="text-xs font-semibold text-primary-700 hover:underline"
-												disabled={approving === e.id}
-												onclick={() => setCard(e, { reviewed: true })}
-											>
-												Mark reviewed
-											</button>{/if}
-									{/if}
-								{:else}
-									<div class="text-ink-soft">Not approved yet</div>
-									{#if canWrite}<button
-											class="text-xs font-semibold text-success hover:underline"
-											disabled={approving === e.id}
-											onclick={() => setCard(e, { status: 'approved' })}
-										>
-											Approve
-										</button>{/if}
-								{/if}
-							</td>
-							<td class="px-3 py-3 whitespace-nowrap">
-								<div>{formatDate(e.updatedAt)}</div>
-								<div class="max-w-36 truncate text-xs text-ink-soft">{e.updatedBy}</div>
-							</td>
-							<td class="px-3 py-3 whitespace-nowrap">
-								{#if canWrite}
-									<button class="btn-ghost px-2" aria-label="Edit" onclick={() => edit(e)}>
-										<Pencil class="h-4 w-4" />
-									</button>
-									{#if e.source !== 'drive'}
+									<p class="mt-0.5 line-clamp-2 text-xs text-ink-soft">{excerpt(e)}</p>
+									{#if e.useWhen}
+										<div class="mt-0.5 text-ink">{e.useWhen}</div>
+									{:else if canWrite}
 										<button
-											class="btn-ghost px-2 text-danger"
-											aria-label="Delete"
-											disabled={deletingId === e.id}
-											onclick={() => remove(e)}
+											class="mt-0.5 block text-left text-xs text-warning hover:underline"
+											onclick={() => edit(e)}
 										>
-											<Trash class="h-4 w-4" />
+											Add “Use when…”: Claude can't tell when to read it
 										</button>
 									{/if}
-								{/if}
-							</td>
-						</tr>
-					{:else}
-						<tr><td colspan="7" class="px-4 py-4 text-sm text-ink-soft">No entry matches.</td></tr>
-					{/each}
-				</tbody>
-			</table>
-		{/if}
-	</section>
-	<p class="text-xs text-ink-soft">
-		Precedence, when two entries disagree: the type higher in this order wins ({types
-			.map((t) => t.label)
-			.join(', ')}), then approved over draft, then the more recently reviewed. Only an approved
-		entry can be Always. Admins-only entries are hidden from everyone else and from their Claude.
-	</p>
-</div>
+									<div
+										class="mt-1 flex flex-wrap items-center gap-x-2 font-mono text-xs text-ink-soft"
+									>
+										{#if e.source === 'drive'}
+											{#if e.url}<a
+													href={e.url}
+													target="_blank"
+													rel="noopener noreferrer"
+													class="inline-flex items-center gap-1 hover:text-primary-700"
+												>
+													Drive{#if e.topics?.length}/{e.topics[0]}{/if}
+													<ExternalLink class="h-3 w-3" />
+												</a>{:else}Drive{/if}
+											{#if e.truncated}· cut at 50,000 characters{/if}
+										{:else}
+											Hub
+										{/if}
+										{#each (e.topics ?? []).slice(e.source === 'drive' ? 1 : 0) as t (t)}
+											<span>#{t}</span>
+										{/each}
+										{#if e.expiredAt}
+											<span class={isExpired(e) ? 'text-danger' : 'text-warning'}>
+												{isExpired(e) ? 'expired' : 'until'}
+												{day(e.expiredAt)}
+											</span>
+										{/if}
+									</div>
+								</td>
+								<td class="px-3 py-3 whitespace-nowrap">
+									{types[typeIndex(e)]?.label ?? 'Other'}
+								</td>
+								<td class="px-3 py-3">
+									<span
+										class="rounded px-1.5 py-0.5 text-xs font-semibold {e.audience === 'restricted'
+											? 'bg-danger/10 text-danger'
+											: e.audience === 'external'
+												? 'bg-primary-50 text-primary-700'
+												: 'bg-canvas text-ink-soft'}"
+									>
+										{e.audience === 'restricted' ? 'admins only' : (e.audience ?? 'internal')}
+									</span>
+								</td>
+								<td class="px-3 py-3">
+									{#if canWrite && uses.length}
+										<select
+											class="rounded-md border border-line bg-white py-1 pr-8 pl-2 text-xs font-semibold focus:ring-focus {USE_TONE[
+												useOf(e)
+											]}"
+											title="How Claude uses it"
+											disabled={savingUse === e.id}
+											value={useOf(e)}
+											onchange={(ev) => setUse(e, ev.currentTarget.value)}
+										>
+											{#each uses as u (u.id)}<option
+													value={u.id}
+													disabled={u.id === 'always' && !approved(e)}
+													title={u.id === 'always' && !approved(e) ? 'Approve it first' : u.help}
+												>
+													{u.label}
+												</option>{/each}
+										</select>
+									{:else}
+										<span class="text-xs font-semibold {USE_TONE[useOf(e)]}">
+											{uses.find((u) => u.id === useOf(e))?.label ?? useOf(e)}
+										</span>
+									{/if}
+								</td>
+								<td class="px-3 py-3 whitespace-nowrap">
+									{#if approved(e)}
+										<div class="text-success">{e.approvedOn ? day(e.approvedOn) : 'Approved'}</div>
+										<div class="text-xs text-ink-soft">{e.approvedBy}</div>
+										{#if reviewDue(e)}
+											<div class="text-xs font-semibold text-warning">Review due</div>
+											{#if canWrite}<button
+													class="text-xs font-semibold text-primary-700 hover:underline"
+													disabled={approving === e.id}
+													onclick={() => setCard(e, { reviewed: true })}
+												>
+													Mark reviewed
+												</button>{/if}
+										{/if}
+									{:else}
+										<div class="text-ink-soft">Not approved yet</div>
+										{#if canWrite}<button
+												class="text-xs font-semibold text-success hover:underline"
+												disabled={approving === e.id}
+												onclick={() => setCard(e, { status: 'approved' })}
+											>
+												Approve
+											</button>{/if}
+									{/if}
+								</td>
+								<td class="px-3 py-3 whitespace-nowrap">
+									<div>{formatDate(e.updatedAt)}</div>
+									<div class="max-w-36 truncate text-xs text-ink-soft">{e.updatedBy}</div>
+								</td>
+								<td class="px-3 py-3 whitespace-nowrap">
+									{#if canWrite}
+										<button class="btn-ghost px-2" aria-label="Edit" onclick={() => edit(e)}>
+											<Pencil class="h-4 w-4" />
+										</button>
+										{#if e.source !== 'drive'}
+											<button
+												class="btn-ghost px-2 text-danger"
+												aria-label="Delete"
+												disabled={deletingId === e.id}
+												onclick={() => remove(e)}
+											>
+												<Trash class="h-4 w-4" />
+											</button>
+										{/if}
+									{/if}
+								</td>
+							</tr>
+						{:else}
+							<tr>
+								<td colspan="7" class="px-4 py-4 text-sm text-ink-soft">No entry matches.</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			{/if}
+		</section>
+		<p class="text-xs text-ink-soft">
+			Precedence, when two entries disagree: the type higher in this order wins ({types
+				.map((t) => t.label)
+				.join(', ')}), then approved over draft, then the more recently reviewed. Only an approved
+			entry can be Always. Admins-only entries are hidden from everyone else and from their Claude.
+		</p>
+	</div>
+{/if}
 
 <KnowledgeModal bind:open={editOpen} entry={editing} {uses} {types} {audiences} {reviewEvery} />
 

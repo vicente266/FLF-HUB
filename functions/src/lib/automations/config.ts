@@ -86,7 +86,7 @@ export const AUTOMATIONS: AutomationDef[] = [
 		id: 'skills-sync',
 		name: 'Import and audit the skills',
 		description:
-			'Every night, lists the skills of FLF TV, the GitHub repos and the Skills folder in Drive on the Skills page and audits each one (a skill gone from a source read whole leaves the list). Read only on GitHub and Drive.',
+			'Every night, lists the skills of FLF TV, the GitHub repos and the Skills folder in Drive in Knowledge → Skills and audits each one (a skill gone from a source read whole leaves the list). Read only on GitHub and Drive.',
 		trigger: 'schedule',
 		schedule: 'Every day at 03:00 (Madrid)',
 		uses: ['skills-github', 'skills-drive'],

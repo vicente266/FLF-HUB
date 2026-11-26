@@ -13,7 +13,6 @@ import UserCog from '@lucide/svelte/icons/user-cog';
 import Shield from '@lucide/svelte/icons/shield';
 import Sparkles from '@lucide/svelte/icons/sparkles';
 import Clapperboard from '@lucide/svelte/icons/clapperboard';
-import WandSparkles from '@lucide/svelte/icons/wand-sparkles';
 
 export interface NavItem {
 	href: string;
@@ -45,8 +44,7 @@ export const NAVIGATION: NavSection[] = [
 				label: 'Knowledge',
 				icon: BookOpen,
 				permission: 'knowledge.any.read'
-			},
-			{ href: '/skills', label: 'Skills', icon: WandSparkles, permission: 'skills.any.read' }
+			}
 		]
 	},
 	{
