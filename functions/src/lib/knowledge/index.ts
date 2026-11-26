@@ -214,11 +214,6 @@ export async function list(): Promise<Entry[]> {
 	});
 }
 
-/** The always-on block (empty string when none), read fresh so expiry is honoured. */
-export async function activeText(auth?: any): Promise<string> {
-	return formatKnowledge((await list()).filter(visibleTo(isAdmin(auth))));
-}
-
 const who = (auth: any) => {
 	const name = auth?.token?.name || auth?.token?.email || 'System';
 	return callVia() === 'claude' ? `${name} · via Claude` : name;
@@ -259,25 +254,45 @@ function cleanCard(p: any, prev: Knowledge | undefined, auth: any, use: Use) {
 	const reviewEvery = Number(p?.reviewEvery ?? prev?.reviewEvery ?? DEFAULT_REVIEW_EVERY);
 	if (!(REVIEW_EVERY as readonly number[]).includes(reviewEvery))
 		throw new HttpsError('invalid-argument', `Review every ${REVIEW_EVERY.join(', ')} months.`);
-	const approving = status === 'approved' && prev?.status !== 'approved';
-	const reviewing = p?.reviewed === true && status === 'approved';
+	let status2 = status;
+	// Making an approved entry shareable outside FLF takes a person's approval again.
+	if (
+		status === 'approved' &&
+		prev?.status === 'approved' &&
+		audience === 'external' &&
+		(prev.audience ?? 'internal') !== 'external' &&
+		p?.status !== 'approved'
+	)
+		status2 = 'draft';
+	const approving = status2 === 'approved' && prev?.status !== 'approved';
+	const reviewing = p?.reviewed === true && status2 === 'approved';
 	if ((approving || reviewing) && callVia() === 'claude')
 		throw new HttpsError(
 			'permission-denied',
 			'Only a person approves or reviews knowledge: ask them to do it on the Knowledge page.'
 		);
-	if (use === 'always' && status !== 'approved')
+	// Always only on an approved entry: asked for explicitly on a draft, it's refused; kept from before
+	// (the entry went back to draft), it quietly becomes When relevant.
+	if (use === 'always' && status2 !== 'approved' && p?.use === 'always' && p?.useExplicit)
 		throw new HttpsError('failed-precondition', 'Approve the entry before setting it to Always.');
 	const today = todayIso();
 	const approval =
-		status === 'approved'
+		status2 === 'approved'
 			? {
 					approvedBy: approving ? who(auth) : (prev?.approvedBy ?? who(auth)),
 					approvedOn: approving ? today : (prev?.approvedOn ?? today),
 					lastReviewed: approving || reviewing ? today : (prev?.lastReviewed ?? today)
 				}
 			: { approvedBy: '', approvedOn: '', lastReviewed: '' };
-	return { type, useWhen, audience, status, reviewEvery, ...approval };
+	return {
+		type,
+		useWhen,
+		audience,
+		status: status2,
+		reviewEvery,
+		...approval,
+		...(use === 'always' && status2 !== 'approved' ? { use: 'relevant' as Use } : {})
+	};
 }
 
 function clean(p: any) {
@@ -303,7 +318,7 @@ function clean(p: any) {
 
 const DOC = 'application/vnd.google-apps.document';
 /** What the import can read as text: Google Docs (exported) and plain text or Markdown files. */
-const READABLE = [DOC, 'text/plain', 'text/markdown', 'text/x-markdown'];
+export const READABLE = [DOC, 'text/plain', 'text/markdown', 'text/x-markdown'];
 
 interface DriveFile {
 	id: string;
@@ -373,6 +388,7 @@ export async function listFolder(): Promise<{
 	const unshared: string[] = [];
 	// A shortcut can point back up the tree: each folder is walked once.
 	const seen = new Set([id]);
+	const seenFiles = new Set<string>();
 	while (queue.length) {
 		const folder = queue.shift()!;
 		// A shortcut's target keeps its own sharing: a folder the Hub can't open lists as empty, so
@@ -409,8 +425,12 @@ export async function listFolder(): Promise<{
 				// A shortcut stands for its target: a folder to walk or a file to read.
 				const t = raw.mimeType === SHORTCUT ? raw.shortcutDetails : undefined;
 				const f = t ? { ...raw, id: t.targetId, mimeType: t.targetMimeType } : raw;
-				if (f.mimeType !== FOLDER) files.push({ ...f, path: folder.path });
-				else if (seen.has(f.id)) continue;
+				// A file can sit in two places (itself and a shortcut to it): keep the first only, or
+				// the second would be imported as a new entry over the first one's card.
+				if (f.mimeType !== FOLDER) {
+					if (!seenFiles.has(f.id)) files.push({ ...f, path: folder.path });
+					seenFiles.add(f.id);
+				} else if (seen.has(f.id)) continue;
 				else if (folder.path.length < MAX_DEPTH) {
 					seen.add(f.id);
 					queue.push({ id: f.id, path: [...folder.path, f.name], shortcut: !!t });
@@ -451,6 +471,18 @@ async function textOf(f: DriveFile): Promise<string> {
  * starts as `relevant`, since documents can be long. Never writes to Drive.
  */
 export async function importFolder() {
+	// Every entry (the list is settings-sized), read before Drive so entries from before the card get
+	// their defaults even when the folder can't be read (the Knowledge page's audience query needs them).
+	const all = (await collection.get()).docs;
+	for (const d of all.filter((x) => !x.data().audience || !x.data().status))
+		await d.ref.set(
+			{
+				audience: d.data().audience ?? 'internal',
+				status: d.data().status ?? 'draft',
+				type: d.data().type ?? 'other'
+			},
+			{ merge: true }
+		);
 	const { folderId: id, files, complete, unshared } = await listFolder();
 	const importable = files.filter((f) => READABLE.includes(f.mimeType));
 	const where = (f: DriveFile) => [...f.path, f.name].join(' / ');
@@ -461,28 +493,22 @@ export async function importFolder() {
 				`${p} (a shortcut to a folder not shared with 900685987021-compute@developer.gserviceaccount.com)`
 		)
 	];
-	// Every entry (the list is settings-sized): the imported ones to update, and any entry from
-	// before the card existed gets its defaults, so the Knowledge page's audience query finds it.
-	const all = (await collection.get()).docs;
-	const missing = all.filter((d) => !d.data().audience || !d.data().status);
-	for (const d of missing)
-		await d.ref.set(
-			{
-				audience: d.data().audience ?? 'internal',
-				status: d.data().status ?? 'draft',
-				type: d.data().type ?? 'other'
-			},
-			{ merge: true }
+	if (!complete)
+		skipped.push(
+			`The folder wasn't read whole (over ${MAX_ENTRIES} files, folders deeper than ${MAX_DEPTH} levels, or a shortcut the Hub can't open): nothing was removed`
 		);
 	const existing = new Map(
 		all.filter((d) => d.data().source === 'drive').map((d) => [d.id, d.data()])
 	);
-	// Knowledge holds MAX_ENTRIES in all: imported documents take what the Hub's own entries leave.
-	const room = Math.max(0, MAX_ENTRIES - (all.length - existing.size));
-	const readable = importable.slice(0, room);
-	if (importable.length > room)
+	// Knowledge holds MAX_ENTRIES in all: documents already imported are updated; new ones only fill
+	// the room left.
+	const known = importable.filter((f) => existing.has(`${DRIVE_PREFIX}${f.id}`));
+	const fresh = importable.filter((f) => !existing.has(`${DRIVE_PREFIX}${f.id}`));
+	const room = Math.max(0, MAX_ENTRIES - all.length);
+	const readable = [...known, ...fresh.slice(0, room)];
+	if (fresh.length > room)
 		skipped.push(
-			`${importable.length - room} documents over the ${MAX_ENTRIES}-entry limit (not imported)`
+			`${fresh.length - room} documents over the ${MAX_ENTRIES}-entry limit (not imported)`
 		);
 	let added = 0;
 	let updated = 0;
@@ -524,14 +550,19 @@ export async function importFolder() {
 		if (prev) {
 			// Its text or its type (folder) changed: a person approves it again (until then not "Always").
 			const changed = prev.driveModifiedTime !== f.modifiedTime || prev.type !== type;
-			await collection
-				.doc(docId)
-				.set(
-					changed && prev.status === 'approved'
-						? { ...body, status: 'draft', approvedBy: '', approvedOn: '', lastReviewed: '' }
-						: body,
-					{ merge: true }
-				);
+			await collection.doc(docId).set(
+				changed && prev.status === 'approved'
+					? {
+							...body,
+							status: 'draft',
+							approvedBy: '',
+							approvedOn: '',
+							lastReviewed: '',
+							...(prev.use === 'always' ? { use: 'relevant' } : {})
+						}
+					: body,
+				{ merge: true }
+			);
 			updated++;
 		} else {
 			await collection.doc(docId).set({
@@ -551,7 +582,7 @@ export async function importFolder() {
 	}
 	// What's left was deleted from (or moved out of) the folder; only after a whole listing.
 	// Not after a capped import either: the documents left out are still in the folder.
-	const whole = complete && importable.length <= room;
+	const whole = complete && fresh.length <= room;
 	if (whole) for (const docId of existing.keys()) await collection.doc(docId).delete();
 	const removed = whole ? existing.size : 0;
 	await db
@@ -574,12 +605,17 @@ export const actions = {
 		const today = todayIso();
 		const folder = await folderId();
 		return {
-			entries: entries.map((e) => ({
-				...e,
-				rank: rankOf(e),
-				expired: isExpired(e, today),
-				reviewDue: reviewDue(e, today)
-			})),
+			// Without the texts (up to 50,000 characters each): the page reads them from Firestore.
+			entries: entries.map((e) => {
+				const { description, ...rest } = e;
+				return {
+					...rest,
+					chars: description.length,
+					rank: rankOf(e),
+					expired: isExpired(e, today),
+					reviewDue: reviewDue(e, today)
+				};
+			}),
 			active: formatKnowledge(entries),
 			relevant: relevantIndex(entries),
 			folder: { id: folder, url: `https://drive.google.com/drive/folders/${folder}` },
@@ -600,8 +636,8 @@ export const actions = {
 	},
 
 	/**
-	 * Create (no id) or update an entry; returns its id. On an imported entry only how Claude uses
-	 * it, its topics and expiry change: its title and text come from Drive.
+	 * Create (no id) or update an entry; returns its id. On an imported entry its card, use, topics
+	 * and expiry change; its title and text come from Drive.
 	 */
 	save: async (p: any, auth: any) => {
 		const id = str(p?.id, 'id', false);
@@ -627,7 +663,9 @@ export const actions = {
 				...(imported ? { label: stored.label, description: stored.description } : {})
 			};
 		}
-		let card = cleanCard(entry, stored, auth, cleanUse(entry).use);
+		// Always asked for in this call (not just kept from before): refused on a draft.
+		const useExplicit = p?.entry?.use === 'always';
+		let card = cleanCard({ ...entry, useExplicit }, stored, auth, cleanUse(entry).use);
 		// What makes an entry say something else (its text, title or type, which sets its rank) takes
 		// a person's approval again, whoever edits it: an approved entry can't be rewritten in place.
 		if (stored && stored.status === 'approved' && card.status === 'approved' && !entry.reviewed) {
@@ -637,7 +675,15 @@ export const actions = {
 						(entry.label ?? '') !== (stored.label ?? ''))) ||
 				card.type !== (stored.type ?? 'other');
 			if (changed)
-				card = { ...card, status: 'draft', approvedBy: '', approvedOn: '', lastReviewed: '' };
+				card = {
+					...card,
+					status: 'draft',
+					approvedBy: '',
+					approvedOn: '',
+					lastReviewed: '',
+					// A draft isn't read Always.
+					...(cleanUse(entry).use === 'always' ? { use: 'relevant' as Use } : {})
+				};
 		}
 		// A type chosen in the Hub (or by Claude) sticks; otherwise the import follows the folder.
 		const typeSet =

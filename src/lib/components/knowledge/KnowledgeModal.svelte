@@ -54,7 +54,9 @@
 			((!imported &&
 				(draft.label.trim() !== (entry?.label ?? '') ||
 					draft.description.trim() !== (entry?.description ?? '').trim())) ||
-				draft.type !== (entry?.type ?? 'other'))
+				draft.type !== (entry?.type ?? 'other') ||
+				// Made shareable outside FLF: approved again too (as the backend does).
+				(draft.audience === 'external' && (entry?.audience ?? 'internal') !== 'external'))
 	);
 	let saving = $state(false);
 	let error = $state<string | null>(null);
@@ -259,7 +261,9 @@
 		</div>
 		{#if backToDraft}
 			<p class="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm" role="status">
-				Saving sends this back to draft; Claude stops reading it Always until you approve it again.
+				Saving sends this back to draft until you approve it again{draft.use === 'always'
+					? ': Claude stops reading it Always meanwhile'
+					: ''}.
 			</p>
 		{/if}
 		<FormError message={error} />

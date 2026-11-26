@@ -10,7 +10,7 @@ for funds and universities, messaging. Ported from the EBS Hub's knowledge store
   `expiredAt` (`YYYY-MM-DD`, optional), `createdAt`, `updatedAt`, `updatedBy`.
 - An entry is **active** until its `expiredAt` day has passed. Expired entries stay in the list (struck
   through, folded away) so they can be re-dated or deleted, but are never given to Claude.
-- Settings-sized (at most 200 entries, 8,000 characters each): read whole and filtered in memory,
+- Settings-sized (at most 200 entries, 8,000 characters for an entry written in the Hub, 50,000 for an imported document): read whole and filtered in memory,
   fresh on every use, so an expiry takes effect the day it passes.
 
 ## Where it is used
@@ -58,29 +58,33 @@ entries are left out whatever their use.
   `knowledge-sync` automation every night at 03:00): each Google Doc, text or Markdown file becomes
   the entry `drive-<file id>` (title = file name, text up to 50,000 characters, link to the file).
   Subfolders are read too, four levels deep, and shortcuts are followed to their folder or file (a
-  shortcut's target keeps its own sharing: one not shared with the service account is reported,
-  in the import and in Health); a new entry gets its top subfolder ("Legal") as a
+  shortcut's target keeps its own sharing: a folder not shared with the service account is reported
+  in the import and in Health, a file in the import); a file that appears twice (itself and a
+  shortcut) is imported once; a new entry gets its top subfolder ("Legal") as a
   topic. A file's text is re-read only when it changed; a file removed from the folder takes its
-  entry with it, but only after a whole listing (none when the listing stopped at the entry limit
-  or the depth). Other file types (PDF, Sheets, Slides) are listed as not importable. Read only:
+  entry with it, but only after a whole listing (none when the listing stopped at the entry limit,
+  the depth or an unshared shortcut, which the import reports). New documents only fill the room
+  left under the 200-entry limit. Other file types (PDF, Sheets, Slides) are listed as not importable. Read only:
   the Hub never writes to Drive.
-- An imported entry's title and text are edited in Drive; in the Hub only its use, topics and
-  expiry change, and it can't be deleted there (remove the file, or set it to Off).
-- Reads: one Drive listing per folder per import plus one export per changed file; one Firestore query of the
-  imported entries.
+- An imported entry's title and text are edited in Drive; in the Hub its card (type, use when,
+  audience, status, review), use, topics and expiry change, and it can't be deleted there (remove
+  the file, or set it to Off).
+- Reads: one Drive listing per folder per import plus one export per changed file; one read of the
+  whole collection (settings-sized), which also gives entries from before the card their defaults
+  (audience internal, status draft, type other).
 
 ## The card
 
 Every entry has a card, like the header of a file in the EBS knowledge repo. It is edited in the
 Hub (Knowledge → Edit), also for documents imported from Drive, whose text stays in Drive.
 
-| Field         | What it is                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `type`        | Policies, Decisions, Offer, Strategy, Procedures, Workflows, Brand, Glossary or Other (`TYPES` in `functions/src/lib/knowledge/config.ts`). An imported document takes it from its top subfolder in Drive (Legal → Policies, Scoring → Procedures…) until the team changes it.                                                                                                                                                     |
-| `useWhen`     | One sentence, "Use when …": Claude reads the entry when the task matches it. Shown in the index of "When relevant" entries.                                                                                                                                                                                                                                                                                                        |
-| `audience`    | `external` (may be shared outside FLF), `internal` (the team; the default) or `restricted` (admins only: hidden from everyone else in the Hub, in Firestore and through Claude).                                                                                                                                                                                                                                                   |
-| `status`      | `draft` (new and imported entries) or `approved`. Only a person approves, on the Knowledge page (a row's Approve, or Status in the edit dialog: the same action); Claude can propose a card but not approve. Only an approved entry can be **Always**. Saving a new text, title or type on an approved entry sends it back to draft (the dialog warns first). An imported document whose text changes in Drive goes back to draft. |
-| `reviewEvery` | 3, 6 or 12 months. An approved entry past `lastReviewed` + `reviewEvery` shows **Review due**; **Mark reviewed** sets `lastReviewed` to today.                                                                                                                                                                                                                                                                                     |
+| Field         | What it is                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`        | Policies, Decisions, Offer, Strategy, Procedures, Workflows, Brand, Glossary or Other (`TYPES` in `functions/src/lib/knowledge/config.ts`). An imported document takes it from its top subfolder in Drive (Legal → Policies, Scoring → Procedures…) until the team changes it.                                                                                                                                                                                                                                                                    |
+| `useWhen`     | One sentence, "Use when …": Claude reads the entry when the task matches it. Shown in the index of "When relevant" entries.                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `audience`    | `external` (may be shared outside FLF), `internal` (the team; the default) or `restricted` (admins only: hidden from everyone else in the Hub, in Firestore and through Claude).                                                                                                                                                                                                                                                                                                                                                                  |
+| `status`      | `draft` (new and imported entries) or `approved`. Only a person approves, on the Knowledge page (a row's Approve, or Status in the edit dialog: the same action); Claude can propose a card but not approve. Only an approved entry can be **Always**. Saving a new text, title or type on an approved entry, or making it External, sends it back to draft (the dialog warns first); a draft is read When relevant, never Always (asking for Always on a draft is refused). An imported document whose text changes in Drive goes back to draft. |
+| `reviewEvery` | 3, 6 or 12 months. An approved entry past `lastReviewed` + `reviewEvery` shows **Review due**; **Mark reviewed** sets `lastReviewed` to today.                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## Precedence
 

@@ -317,14 +317,7 @@ async function check(id: string, secrets: Secrets): Promise<CheckResult> {
 						detail: `Shortcuts to folders the Hub can't open (share them with 900685987021-compute@developer.gserviceaccount.com as Viewer): ${unshared.join(', ')}.`,
 						hint: `Some shortcuts in the Knowledge folder point to folders the Hub can’t open (${unshared.join(', ')}). Share those folders with the Hub as Viewer (the address is in the setup steps).`
 					};
-				const readable = files.filter((f) =>
-					[
-						'application/vnd.google-apps.document',
-						'text/plain',
-						'text/markdown',
-						'text/x-markdown'
-					].includes(f.mimeType)
-				).length;
+				const readable = files.filter((f) => knowledge.READABLE.includes(f.mimeType)).length;
 				return {
 					status: 'ok',
 					detail: `${files.length} files in ${folders + 1} folders (the Knowledge folder and ${folders} subfolders), ${readable} importable (Google Docs, text, Markdown).`
