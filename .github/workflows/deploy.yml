@@ -62,28 +62,35 @@ jobs:
     needs: gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Keyless: GitHub proves who it is (OIDC) and Google lets only this repo's main act as the
+    # deploy account (Workload Identity Federation; the organisation forbids account keys).
+    permissions:
+      contents: read
+      id-token: write
     env:
-      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      WIF_PROVIDER: ${{ vars.FIREBASE_WIF_PROVIDER }}
+      DEPLOY_ACCOUNT: ${{ vars.FIREBASE_DEPLOY_ACCOUNT }}
     steps:
       - name: Not set up
-        if: env.FIREBASE_SERVICE_ACCOUNT == ''
-        run: echo "FIREBASE_SERVICE_ACCOUNT is not set; skipping the backend deploy."
+        if: env.WIF_PROVIDER == ''
+        run: echo "FIREBASE_WIF_PROVIDER is not set; skipping the backend deploy."
       - uses: actions/checkout@v4
-        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        if: env.WIF_PROVIDER != ''
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: actions/setup-node@v4
-        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        if: env.WIF_PROVIDER != ''
         with:
           node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: functions/package-lock.json
       - uses: google-github-actions/auth@v2
-        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        if: env.WIF_PROVIDER != ''
         with:
-          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_ACCOUNT }}
       - name: Deploy
-        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        if: env.WIF_PROVIDER != ''
         run: |
           npm ci --prefix functions
           npx --yes firebase-tools@15 deploy --only functions,firestore:rules,firestore:indexes --project flfhub --non-interactive --force

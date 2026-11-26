@@ -103,7 +103,11 @@ Actions tab (**Deploy → Run workflow**).
   `HOSTINGER_FTP_PASSWORD` (hPanel → Files → FTP Accounts; an account limited to the hub.
   folder is safest). Variables `VITE_FIREBASE_*` (as in `.env.example`) and, when the FTP
   account's root is not the hub. folder, `HOSTINGER_FTP_DIR`.
-- **Backend (Firebase):** secret `FIREBASE_SERVICE_ACCOUNT`, the JSON key of a service account
-  in `flfhub` with Firebase Admin, Cloud Functions Admin, Cloud Run Admin, Service Account User,
-  Secret Manager Viewer and Artifact Registry Administrator. New Secret Manager secrets are
-  still created by hand (`firebase functions:secrets:set`) before the deploy that needs them.
+- **Backend (Firebase):** keyless, through Workload Identity Federation (the organisation forbids
+  service-account keys). Repo variables `FIREBASE_WIF_PROVIDER`
+  (`projects/900685987021/locations/global/workloadIdentityPools/github/providers/github`) and
+  `FIREBASE_DEPLOY_ACCOUNT` (`github-deploy@flfhub.iam.gserviceaccount.com`). The pool only
+  accepts this repository's `main`; the account has Firebase Admin, Cloud Functions Admin, Cloud
+  Run Admin, Service Account User, Secret Manager Viewer, Artifact Registry Administrator and
+  Cloud Scheduler Admin. New Secret Manager secrets are still created by hand
+  (`firebase functions:secrets:set`) before the deploy that needs them.
