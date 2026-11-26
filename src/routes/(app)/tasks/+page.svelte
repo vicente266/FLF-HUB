@@ -22,7 +22,8 @@
 		portal: 'Portal',
 		manual: 'Manual'
 	};
-	// ?scope=all opens Everyone (Home links here); #overdue scrolls to the Overdue group.
+	// ?scope=all opens Everyone, ?scope=mine your own (Home links there); #overdue scrolls to the
+	// Overdue group.
 	let scope = $state<'mine' | 'all'>(page.url.searchParams.get('scope') === 'all' ? 'all' : 'mine');
 	let tasks = $state<Task[]>([]);
 	let loaded = $state(false);
@@ -160,8 +161,9 @@
 									<a href="/crm/{t.contactId}" class="text-xs text-ink-soft hover:text-primary-700">
 										{t.contactName}
 									</a>
-								{:else if t.ownerName}
-									<span class="text-xs text-ink-soft">{t.ownerName} · from the portal</span>
+								{:else if t.source === 'portal'}
+									<!-- The sheet's owner can differ from who it is for now: only say where it came from. -->
+									<span class="text-xs text-ink-soft">From the portal</span>
 								{/if}
 							</div>
 							<span class="text-right text-xs text-ink-soft">

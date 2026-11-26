@@ -27,6 +27,7 @@ export const hasPermission = async (auth: any, permission: string): Promise<bool
 
 export const serverTimestamp = () => admin.firestore.FieldValue.serverTimestamp();
 export const increment = (n: number) => admin.firestore.FieldValue.increment(n);
+export const deleteField = () => admin.firestore.FieldValue.delete();
 export const Timestamp = admin.firestore.Timestamp;
 
 /** A trimmed string from a payload field, or a 400 when it is required and missing. */

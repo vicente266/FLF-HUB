@@ -11,7 +11,7 @@
 	} from 'firebase/firestore';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { db } from '$lib/firebase';
-	import { callAction } from '$lib/actions';
+	import { callAction, errorText } from '$lib/actions';
 	import { me } from '$lib/stores';
 	import { hasPermission, listen, setTitle, formatDate, formatDateTime, toDate } from '$lib/utils';
 	import {
@@ -34,12 +34,11 @@
 
 	let tasks = $state<Task[]>([]);
 	let undated = $state(0);
-	let attentionMine = $state<Contact[]>([]);
-	let attentionAll = $state<Contact[]>([]);
-	// Mine first, then the rest of the team's.
+	let stale = $state<Contact[]>([]);
+	// The team's longest-quiet first, yours on top (all of yours: the card above links there).
 	let attention = $derived([
-		...attentionMine,
-		...attentionAll.filter((c) => !attentionMine.some((m) => m.id === c.id))
+		...stale.filter((c) => c.ownerUid === $me?.uid),
+		...stale.filter((c) => c.ownerUid !== $me?.uid)
 	]);
 	let error = $state<string | null>(null);
 	const cfg = crmConfig();
@@ -55,27 +54,32 @@
 		const uid = $me?.uid;
 		if (!canCrm || !uid || !staleDays) return;
 		const cutoff = Timestamp.fromMillis(Date.now() - staleDays * 86_400_000);
-		const stale = (...filters: ReturnType<typeof where>[]) =>
+		return listen<Contact>(
 			query(
 				collection(db, 'contact'),
-				...filters,
 				where('open', '==', true),
 				where('lastActivityAt', '<', cutoff),
 				orderBy('lastActivityAt'),
 				limit(10)
-			);
-		const unsubs = [
-			listen<Contact>(stale(where('ownerUid', '==', uid)), (rows) => (attentionMine = rows)),
-			listen<Contact>(stale(), (rows) => (attentionAll = rows))
-		];
-		return () => unsubs.forEach((u) => u());
+			),
+			(rows) => (stale = rows)
+		);
 	});
 
+	const canReports = hasPermission('reports.any.read');
+	function loadKpis() {
+		if (!canReports) return;
+		callAction<Summary>('reports:kpis')
+			.then((s) => (summary = s))
+			.catch((e) => (error = errorText(e)));
+	}
+
 	onMount(() => {
-		if (hasPermission('reports.any.read'))
-			callAction<Summary>('reports:kpis').then((s) => (summary = s));
+		loadKpis();
 		if (hasPermission('health.any.read'))
-			callAction<Health>('connections:health.get').then((h) => (health = h));
+			callAction<Health>('connections:health.get')
+				.then((h) => (health = h))
+				.catch((e) => (error = errorText(e)));
 		if (!canCrm || !$me) return;
 		const mine = [where('assigneeUid', '==', $me.uid), where('done', '==', false)];
 		// Undated tasks (mostly from the portal sheet) are counted apart, so they can't push the
@@ -120,7 +124,7 @@
 	{#if summary}
 		{@const k = summary.kpis}
 		<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-			{#each [{ label: 'My open tasks', value: k.openTasks, href: '/tasks?scope=mine', tone: '' }, { label: 'My overdue tasks', value: k.overdueTasks, href: '/tasks?scope=mine#overdue', tone: k.overdueTasks ? 'text-danger' : '' }, { label: 'My contacts needing attention', value: k.needsAttention, href: '/crm?attention=1&owner=me', tone: k.needsAttention ? 'text-warning' : '' }, { label: 'New contacts (30 days)', value: k.newLast30, href: '/crm?view=list', tone: '' }] as { label, value, href, tone } (label)}
+			{#each [{ label: 'My open tasks', value: k.openTasks, href: '/tasks?scope=mine', tone: '' }, { label: 'My overdue tasks', value: k.overdueTasks, href: '/tasks?scope=mine#overdue', tone: k.overdueTasks ? 'text-danger' : '' }, { label: 'My contacts needing attention', value: k.needsAttention, href: '/crm?type=all&attention=1&owner=me', tone: k.needsAttention ? 'text-warning' : '' }, { label: 'New contacts (30 days, team)', value: k.newLast30, href: '/crm?type=all&since=30', tone: '' }] as { label, value, href, tone } (label)}
 				<a {href} class="block card px-4 py-3 hover:border-primary-300">
 					<div class="text-xs font-semibold text-ink-soft">{label}</div>
 					<div class="mt-1 text-2xl font-bold {tone}">{value}</div>
@@ -155,7 +159,11 @@
 								aria-label="Done: {t.title}"
 								disabled={!canWrite}
 								checked={false}
-								onchange={async (e) => (error = await tickTask(t.id, e.currentTarget))}
+								onchange={async (e) => {
+									error = await tickTask(t.id, e.currentTarget);
+									// The counts above changed with it.
+									if (!error) loadKpis();
+								}}
 							/>
 							<div class="min-w-0 flex-1">
 								<div class="truncate font-medium">{t.title}</div>
@@ -163,8 +171,8 @@
 									<a href="/crm/{t.contactId}" class="text-xs text-ink-soft hover:text-primary-700">
 										{t.contactName}
 									</a>
-								{:else if t.ownerName}
-									<span class="text-xs text-ink-soft">{t.ownerName} · from the portal</span>
+								{:else if t.source === 'portal'}
+									<span class="text-xs text-ink-soft">From the portal</span>
 								{/if}
 							</div>
 							<span

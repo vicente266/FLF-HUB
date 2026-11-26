@@ -1,8 +1,16 @@
 <script lang="ts">
-	import { collection, query, where, orderBy, limit } from 'firebase/firestore';
+	import {
+		collection,
+		query,
+		where,
+		orderBy,
+		limit,
+		Timestamp,
+		type QueryConstraint
+	} from 'firebase/firestore';
 	import { untrack } from 'svelte';
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
+	import { afterNavigate, goto } from '$app/navigation';
 	import Plus from '@lucide/svelte/icons/plus';
 	import Search from '@lucide/svelte/icons/search';
 	import Columns3 from '@lucide/svelte/icons/columns-3';
@@ -12,12 +20,11 @@
 	import FellowProfile from '$lib/components/crm/FellowProfile.svelte';
 	import NewContactDialog from '$lib/components/crm/NewContactDialog.svelte';
 	import ReasonDialog from '$lib/components/crm/ReasonDialog.svelte';
+	import MoveNotice from '$lib/components/crm/MoveNotice.svelte';
 	import { db } from '$lib/firebase';
-	import { callAction, errorText } from '$lib/actions';
 	import { me } from '$lib/stores';
-	import { hasPermission, listen, setTitle, relative, formatDate } from '$lib/utils';
+	import { hasPermission, listen, setTitle, relative, formatDate, toDate } from '$lib/utils';
 	import {
-		askReason,
 		attentionDays,
 		contactSubtitle,
 		contactTitle,
@@ -25,8 +32,10 @@
 		crmConfig,
 		daysQuiet,
 		initials,
+		moveContact,
 		sourceLabel,
-		stageLabel
+		stageLabel,
+		typeStyle
 	} from '$lib/helpers/crmConfig.svelte';
 	import type { Contact, ContactType } from '$lib/types/crm';
 	import FormError from '$lib/components/shared/FormError.svelte';
@@ -37,72 +46,109 @@
 	const cfg = crmConfig();
 	const canWrite = hasPermission('crm.any.write');
 
-	// Tab, view and filters live in the URL (?type=investor&view=list&attention=1&owner=me), so a
-	// link or the contact page's back link opens the same list. A phone opens in list view.
-	const params = page.url.searchParams;
-	let type = $state<ContactType>(params.get('type') ?? '');
-	let view = $state<'board' | 'list'>(
-		params.get('view') === 'list' ||
-			(!params.get('view') && typeof window !== 'undefined' && window.innerWidth < 768)
-			? 'list'
-			: 'board'
-	);
-	let search = $state(params.get('q') ?? '');
-	let mine = $state(params.get('owner') === 'me');
-	let attentionOnly = $state(params.get('attention') === '1');
+	// Tab, view and filters live in the URL (?type=investor&view=list&attention=1&owner=me&since=30),
+	// so a link or the contact page's back link opens the same list. A phone opens in list view.
+	// "all" is every type, as a list (Home's cards link there).
+	const DAY = 86_400_000;
+	let type = $state<ContactType | 'all'>('');
+	let view = $state<'board' | 'list'>('board');
+	let search = $state('');
+	let mine = $state(false);
+	let attentionOnly = $state(false);
+	/** Only contacts created in the last N days (0 = any). */
+	let since = $state(0);
+	function readUrl(url: URL) {
+		const p = url.searchParams;
+		type = p.get('type') ?? '';
+		view =
+			p.get('view') === 'list' ||
+			(!p.get('view') && typeof window !== 'undefined' && window.innerWidth < 768)
+				? 'list'
+				: 'board';
+		search = p.get('q') ?? '';
+		mine = p.get('owner') === 'me';
+		attentionOnly = p.get('attention') === '1';
+		since = Math.max(0, Number(p.get('since')) || 0);
+	}
+	readUrl(page.url);
+	// The URL this page last wrote; any other (the sidebar's CRM link, a link from Home) is read
+	// again, so the screen always shows what the URL says.
+	let written = '';
+	afterNavigate(({ to }) => {
+		if (to?.url.pathname === '/crm' && `${to.url.pathname}${to.url.search}` !== written)
+			readUrl(to.url);
+	});
 
 	// The first contact type the backend defines, once its config arrives (or an unknown one in
 	// the URL).
 	$effect(() => {
-		if (cfg.value && !cfg.value.types.includes(type)) type = cfg.value.types[0];
+		if (cfg.value && type !== 'all' && !cfg.value.types.includes(type)) type = cfg.value.types[0];
 	});
 
+	let all = $derived(type === 'all');
 	$effect(() => {
 		if (!type) return;
 		const q: [string, string][] = [
 			['type', type],
-			['view', view]
+			['view', all ? 'list' : view]
 		];
 		if (attentionOnly) q.push(['attention', '1']);
 		if (mine) q.push(['owner', 'me']);
+		if (since) q.push(['since', String(since)]);
 		if (search.trim()) q.push(['q', search.trim()]);
 		const href = `/crm?${q.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')}`;
 		crmBack.href = href;
 		untrack(() => {
-			if (page.url.pathname === '/crm' && `${page.url.pathname}${page.url.search}` !== href)
+			if (page.url.pathname === '/crm' && `${page.url.pathname}${page.url.search}` !== href) {
+				written = href;
 				goto(href, { replaceState: true, keepFocus: true, noScroll: true });
+			}
 		});
 	});
 
 	let contacts = $state<Contact[]>([]);
 	let loaded = $state(false);
 
-	// One bounded listener for the selected type.
+	let staleDays = $derived(cfg.value?.staleDays ?? 14);
+	// One bounded listener. A type tab: its 500 newest, filtered below. All: the filters go into
+	// the query, so "needs attention" and "new" are complete across every type, as Home counts them.
 	$effect(() => {
 		const t = type;
 		if (!t) return;
-		loaded = false;
-		return listen<Contact>(
-			query(
-				collection(db, 'contact'),
-				where('type', '==', t),
-				orderBy('createdAt', 'desc'),
-				limit(500)
-			),
-			(rows) => {
-				contacts = rows;
-				loaded = true;
+		const uid = $me?.uid;
+		const filters: QueryConstraint[] = [];
+		if (t !== 'all') filters.push(where('type', '==', t), orderBy('createdAt', 'desc'));
+		else {
+			if (mine && uid) filters.push(where('ownerUid', '==', uid));
+			if (attentionOnly) {
+				// Since is applied below: one range per query here.
+				const cutoff = Timestamp.fromMillis(Date.now() - staleDays * DAY);
+				filters.push(
+					where('open', '==', true),
+					where('lastActivityAt', '<', cutoff),
+					orderBy('lastActivityAt')
+				);
+			} else {
+				if (since)
+					filters.push(where('createdAt', '>=', Timestamp.fromMillis(Date.now() - since * DAY)));
+				filters.push(orderBy('createdAt', 'desc'));
 			}
-		);
+		}
+		loaded = false;
+		return listen<Contact>(query(collection(db, 'contact'), ...filters, limit(500)), (rows) => {
+			contacts = rows;
+			loaded = true;
+		});
 	});
 
-	let staleDays = $derived(cfg.value?.staleDays ?? 14);
 	const attention = (c: Contact) => attentionDays(c, staleDays);
-	let filtering = $derived(mine || attentionOnly || !!search.trim());
+	const isNew = (c: Contact) => (toDate(c.createdAt)?.getTime() ?? 0) >= Date.now() - since * DAY;
+	let filtering = $derived(mine || attentionOnly || !!since || !!search.trim());
 	let filtered = $derived(
 		contacts.filter((c) => {
 			if (mine && c.ownerUid !== $me?.uid) return false;
 			if (attentionOnly && attention(c) === null) return false;
+			if (since && !isNew(c)) return false;
 			const q = search.trim().toLowerCase();
 			if (!q) return true;
 			return [c.name, c.email, c.company, ...(c.tags ?? [])].some((v) =>
@@ -111,17 +157,17 @@
 		})
 	);
 
-	let stages = $derived(cfg.value?.pipelines[type]?.stages ?? []);
+	let stages = $derived(all ? [] : (cfg.value?.pipelines[type]?.stages ?? []));
 
 	// Losing columns (Lost, Declined) start folded, so the working stages fit the screen.
 	let expanded = $state<Record<string, boolean>>({});
 	const folded = (s: { id: string; askReason?: boolean }) =>
 		!!s.askReason && !expanded[`${type}:${s.id}`];
 
-	/** Card date colour: warning after 30 days without activity, danger after 90. */
+	/** Card date colour for an open contact: warning after 30 days without activity, danger after 90. */
 	function ageTone(c: Contact) {
 		const d = daysQuiet(c);
-		if (d === null) return 'text-ink-soft';
+		if (!c.open || d === null) return 'text-ink-soft';
 		if (d >= 90) return 'text-danger font-semibold';
 		if (d >= 30) return 'text-warning font-semibold';
 		return 'text-ink-soft';
@@ -134,22 +180,16 @@
 		const id = dragging;
 		dragging = null;
 		const c = contacts.find((x) => x.id === id);
-		if (!id || !c || c.stage === stage || !canWrite) return;
-		const reason = await askReason(
-			stages.find((s) => s.id === stage),
-			contactTitle(c)
-		);
-		if (reason === null) return;
-		const previous = c.stage;
-		c.stage = stage; // optimistic; the listener confirms
+		const to = stages.find((s) => s.id === stage);
+		if (!id || !c || !to || c.stage === stage || !canWrite) return;
 		moveError = null;
-		try {
-			await callAction('crm:contact.stage', { id, stage, reason });
-		} catch (e) {
-			// Nothing changed in Firestore, so the listener won't put it back.
-			c.stage = previous;
-			moveError = errorText(e);
-		}
+		// Optimistic; the listener confirms. On failure nothing changed in Firestore, so the
+		// listener won't put it back: the rollback does.
+		moveError = await moveContact(c, to, () => {
+			const previous = c.stage;
+			c.stage = stage;
+			return () => (c.stage = previous);
+		});
 	}
 
 	let creating = $state(false);
@@ -178,6 +218,15 @@
 						{config.pipelines[t].plural}
 					</button>
 				{/each}
+				<button
+					class="rounded-md px-3 py-1 text-sm font-semibold {all
+						? 'bg-primary-600 text-white'
+						: 'text-ink-soft hover:text-ink'}"
+					title="Every type, as a list"
+					onclick={() => (type = 'all')}
+				>
+					All
+				</button>
 			</div>
 
 			<div class="flex min-w-0 grow flex-wrap items-center justify-start gap-2 md:justify-end">
@@ -200,19 +249,29 @@
 					<input type="checkbox" class="rounded text-primary-600" bind:checked={attentionOnly} /> Needs
 					attention
 				</label>
+				<label class="flex items-center gap-1.5 text-sm whitespace-nowrap" title="Created recently">
+					<input
+						type="checkbox"
+						class="rounded text-primary-600"
+						checked={!!since}
+						onchange={(e) => (since = e.currentTarget.checked ? 30 : 0)}
+					/>
+					New ({since || 30} days)
+				</label>
 				<div class="flex rounded-lg border border-line/70 bg-white p-0.5">
 					<button
-						class="rounded-md p-1.5 {view === 'board'
+						class="rounded-md p-1.5 disabled:opacity-40 {view === 'board' && !all
 							? 'bg-primary-50 text-primary-700'
 							: 'text-ink-soft'}"
-						title="Board"
+						title={all ? 'Board: pick a type first' : 'Board'}
 						aria-label="Board"
+						disabled={all}
 						onclick={() => (view = 'board')}
 					>
 						<Columns3 class="h-4 w-4" />
 					</button>
 					<button
-						class="rounded-md p-1.5 {view === 'list'
+						class="rounded-md p-1.5 {view === 'list' || all
 							? 'bg-primary-50 text-primary-700'
 							: 'text-ink-soft'}"
 						title="List"
@@ -231,8 +290,9 @@
 		</div>
 
 		<FormError message={moveError} />
+		<MoveNotice onerror={(m) => (moveError = m)} />
 
-		{#if loaded && contacts.length === 0}
+		{#if loaded && contacts.length === 0 && !filtering && pipeline}
 			<Empty title="Add your first {pipeline.label.toLowerCase()}">
 				<p>{pipeline.description}</p>
 				{#if canWrite}
@@ -241,7 +301,10 @@
 					</button>
 				{/if}
 			</Empty>
-		{:else if view === 'board'}
+		{:else if view === 'board' && !all}
+			{#if loaded && filtering && filtered.length === 0}
+				<p class="text-sm text-ink-soft">No contacts match these filters.</p>
+			{/if}
 			<!-- Only the board scrolls sideways, inside itself. -->
 			<div class="flex gap-2 overflow-x-auto pb-4">
 				{#each stages as stage (stage.id)}
@@ -345,8 +408,9 @@
 							<th class="px-4 py-2 font-semibold">
 								{type === 'partner' ? 'Organisation' : 'Name'}
 							</th>
+							{#if all}<th class="px-4 py-2 font-semibold">Type</th>{/if}
 							<th class="hidden px-4 py-2 font-semibold md:table-cell">
-								{type === 'partner' ? 'Main contact' : 'Company'}
+								{#if type === 'partner'}Main contact{:else if all}Company / contact{:else}Company{/if}
 							</th>
 							<th class="px-4 py-2 font-semibold">Stage</th>
 							<th class="hidden px-4 py-2 font-semibold md:table-cell">Owner</th>
@@ -362,6 +426,10 @@
 									<a href="/crm/{c.id}" class="font-semibold break-words hover:text-primary-700">
 										{contactTitle(c)}
 									</a>
+									<!-- Below md the Last activity column is hidden: the marker sits by the name. -->
+									{#if quiet !== null}<span class="md:hidden" title="{quiet} days without activity">
+											<TriangleAlert class="ml-1 inline h-3.5 w-3.5 text-warning" />
+										</span>{/if}
 									<div class="text-xs break-all text-ink-soft">
 										{c.email}
 										{#if c.type === 'fellow'}<button
@@ -372,6 +440,16 @@
 											</button>{/if}
 									</div>
 								</td>
+								{#if all}<td class="px-4 py-2">
+										<span
+											class="rounded-md px-1.5 py-0.5 text-xs font-semibold whitespace-nowrap {typeStyle(
+												config,
+												c.type
+											)}"
+										>
+											{config.pipelines[c.type]?.label ?? c.type}
+										</span>
+									</td>{/if}
 								<td class="hidden px-4 py-2 md:table-cell">{contactSubtitle(c) || '—'}</td>
 								<td class="px-4 py-2">{stageLabel(config, c.type, c.stage)}</td>
 								<td class="hidden px-4 py-2 md:table-cell">{c.ownerName ?? '—'}</td>
@@ -387,8 +465,9 @@
 							</tr>
 						{:else}
 							<tr>
-								<td colspan="6" class="px-4 py-8 text-center text-ink-soft">
-									{filtering ? 'No contacts match your search or filters.' : 'No contacts yet.'}
+								<td colspan={all ? 7 : 6} class="px-4 py-8 text-center text-ink-soft">
+									{#if !loaded}Loading…{:else if filtering}No contacts match these filters.{:else}No
+										contacts yet.{/if}
 								</td>
 							</tr>
 						{/each}
@@ -398,7 +477,11 @@
 		{/if}
 	</div>
 
-	{#if canWrite}<NewContactDialog bind:open={creating} {config} {type} />{/if}
+	{#if canWrite}<NewContactDialog
+			bind:open={creating}
+			{config}
+			type={all ? config.types[0] : type}
+		/>{/if}
 {:else}
 	<p class="text-sm text-ink-soft">Loading…</p>
 {/if}

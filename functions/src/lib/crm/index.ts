@@ -1,6 +1,6 @@
 import { HttpsError } from 'firebase-functions/v2/https';
 import { db } from '../../firestore';
-import { serverTimestamp, str, oneOf } from '../utils';
+import { deleteField, serverTimestamp, str, oneOf } from '../utils';
 import { callVia } from '../call-context';
 import {
 	CONTACT_TYPES,
@@ -70,7 +70,32 @@ export interface Contact {
 	createdAt: FirebaseFirestore.Timestamp;
 	updatedAt: FirebaseFirestore.Timestamp;
 	createdBy: string;
+	/** The latest stage move in the Hub, with what Undo puts back (`contact.undoMove`). */
+	lastMove?: LastMove;
+	/** The move just undone: the trigger runs no stage automation for that write. */
+	undoneMove?: string;
 }
+
+export interface LastMove {
+	id: string;
+	from: string;
+	to: string;
+	prevOpen: boolean;
+	prevStageChangedAt: FirebaseFirestore.Timestamp | null;
+	prevLostReason: string | null;
+	prevChangedByUid: string | null;
+	prevChangedByName: string | null;
+	prevLastActivityAt: FirebaseFirestore.Timestamp | null;
+	prevNeedsAttention: boolean;
+	/** Its timeline entry: while it is the latest, Undo also puts the last activity back. */
+	activityId: string;
+	at: FirebaseFirestore.Timestamp;
+	by: string | null;
+}
+
+/** The move's id while the contact is still where that move put it, else undefined. */
+export const currentMove = (c: Contact | undefined) =>
+	c?.lastMove && c.lastMove.to === c.stage ? c.lastMove.id : undefined;
 
 export type ActivityKind = 'created' | 'note' | 'stage' | 'assigned' | 'automation' | 'updated';
 
@@ -127,6 +152,21 @@ export function endOfDay(date: string): Date {
 	return new Date(utc - (asLocal - utc));
 }
 
+/** A timeline entry as stored in `contact/{id}/activity`. */
+const entry = (
+	kind: ActivityKind,
+	text: string,
+	by: string,
+	extra: Record<string, unknown> = {}
+) => ({
+	kind,
+	text,
+	by,
+	via: callVia() ?? 'hub',
+	at: serverTimestamp(),
+	...extra
+});
+
 /** Append one entry to a contact's timeline and touch its last activity. */
 export async function logActivity(
 	contactId: string,
@@ -137,14 +177,7 @@ export async function logActivity(
 ): Promise<void> {
 	const ref = contacts.doc(contactId);
 	const batch = db.batch();
-	batch.set(ref.collection('activity').doc(), {
-		kind,
-		text,
-		by,
-		via: callVia() ?? 'hub',
-		at: serverTimestamp(),
-		...extra
-	});
+	batch.set(ref.collection('activity').doc(), entry(kind, text, by, extra));
 	batch.update(ref, { lastActivityAt: serverTimestamp(), needsAttention: false });
 	await batch.commit();
 	// Activity answers "no activity for N days": its check-in task is done.
@@ -155,30 +188,50 @@ export async function logActivity(
  * Close a contact's open tasks made by these automations (they belonged to a stage, next step or
  * stale flag that no longer applies). Kept as done, marked superseded; manual, Claude and portal
  * tasks have no `automationId` and are never touched. One query. Returns how many.
+ *
+ * For a stage move (`moveId`), each is tagged `closedByMove` so Undo can reopen it, and nothing is
+ * closed once that move is undone (checked in the same transaction as the Undo's).
  */
-export async function closeAutomationTasks(contactId: string, automationIds: string[]) {
-	const snap = await tasks.where('contactId', '==', contactId).where('done', '==', false).get();
-	const open = snap.docs.filter((d) => automationIds.includes(d.data().automationId));
-	if (!open.length) return 0;
-	const batch = db.batch();
-	for (const d of open)
-		batch.update(d.ref, { done: true, superseded: true, doneAt: serverTimestamp() });
-	await batch.commit();
-	return open.length;
+export async function closeAutomationTasks(
+	contactId: string,
+	automationIds: string[],
+	moveId?: string
+) {
+	const query = tasks.where('contactId', '==', contactId).where('done', '==', false);
+	const pick = (snap: FirebaseFirestore.QuerySnapshot) =>
+		snap.docs.filter((d) => automationIds.includes(d.data().automationId));
+	const closed = { done: true, superseded: true, doneAt: serverTimestamp() };
+	if (!moveId) {
+		const open = pick(await query.get());
+		if (!open.length) return 0;
+		const batch = db.batch();
+		for (const d of open) batch.update(d.ref, closed);
+		await batch.commit();
+		return open.length;
+	}
+	return db.runTransaction(async (tx) => {
+		const c = (await tx.get(contacts.doc(contactId))).data() as Contact | undefined;
+		if (currentMove(c) !== moveId) return 0;
+		const open = pick(await tx.get(query));
+		for (const d of open) tx.update(d.ref, { ...closed, closedByMove: moveId });
+		return open.length;
+	});
 }
 
 /**
- * A contact got a new owner: its open automation tasks move to them (they went to whoever moved
- * the contact only because it had no owner). Manual, Claude and portal tasks keep their assignee.
- * One query. Returns how many moved.
+ * A contact's owner changed: its open automation tasks go to whoever an automation would give them
+ * to now (the new owner, or with none whoever last moved the contact; see `assigneeOf`). Manual,
+ * Claude and portal tasks keep their assignee. One query. Returns how many moved.
  */
-export async function handOverTasks(contactId: string, ownerUid: string | null) {
-	if (!ownerUid) return 0;
+export async function handOverTasks(contactId: string, assigneeUid: string | null) {
+	if (!assigneeUid) return 0;
 	const snap = await tasks.where('contactId', '==', contactId).where('done', '==', false).get();
-	const mine = snap.docs.filter((d) => d.data().automationId && d.data().assigneeUid !== ownerUid);
+	const mine = snap.docs.filter(
+		(d) => d.data().automationId && d.data().assigneeUid !== assigneeUid
+	);
 	if (!mine.length) return 0;
 	const batch = db.batch();
-	for (const d of mine) batch.update(d.ref, { assigneeUid: ownerUid });
+	for (const d of mine) batch.update(d.ref, { assigneeUid });
 	await batch.commit();
 	return mine.length;
 }
@@ -258,6 +311,12 @@ export async function create(p: any, by: string, uid: string): Promise<string> {
 	// Stage and owner are optional: the first stage, and no owner, unless the form picked them.
 	const stage = p.stage ? stageOf(type, str(p.stage, 'stage')) : stageOf(type, firstStage(type));
 	if (!stage) throw new HttpsError('invalid-argument', 'Invalid stage.');
+	// A losing stage needs its reason: that goes through a move (contact.stage).
+	if (stage.askReason)
+		throw new HttpsError(
+			'invalid-argument',
+			`Create it in another stage, then move it to ${stage.label} with the reason.`
+		);
 	const ownerUid = str(p.ownerUid, 'ownerUid', false) || null;
 	let ownerName: string | null = null;
 	if (ownerUid) {
@@ -347,24 +406,111 @@ export const actions = {
 		const reason = str(p.reason, 'reason', false);
 		if (reason.length > 500)
 			throw new HttpsError('invalid-argument', 'Keep the reason under 500 characters.');
-		await doc.ref.update({
+		const moveId = contacts.doc().id;
+		const by = who(auth);
+		const activity = doc.ref.collection('activity').doc();
+		const lastMove: Omit<LastMove, 'at'> & { at: unknown } = {
+			id: moveId,
+			from: c.stage,
+			to: stage.id,
+			prevOpen: c.open,
+			prevStageChangedAt: c.stageChangedAt ?? null,
+			prevLostReason: c.lostReason ?? null,
+			prevChangedByUid: c.changedByUid ?? null,
+			prevChangedByName: c.changedByName ?? null,
+			prevLastActivityAt: c.lastActivityAt ?? null,
+			prevNeedsAttention: c.needsAttention ?? false,
+			activityId: activity.id,
+			at: serverTimestamp(),
+			by: auth?.uid ?? null
+		};
+		// The move and its timeline entry in one write (the entry is activity, as logActivity's).
+		const batch = db.batch();
+		batch.update(doc.ref, {
 			stage: stage.id,
 			open: !stage.final,
 			stageChangedAt: serverTimestamp(),
 			updatedAt: serverTimestamp(),
+			lastActivityAt: serverTimestamp(),
+			needsAttention: false,
 			changedByUid: auth?.uid ?? null,
-			changedByName: who(auth),
+			changedByName: by,
 			// The reason belongs to a losing stage; leaving it clears it.
-			lostReason: stage.askReason ? reason : ''
+			lostReason: stage.askReason ? reason : '',
+			lastMove
 		});
-		await logActivity(
-			id,
-			'stage',
-			`${from} → ${stage.label}${stage.askReason && reason ? `: ${reason}` : ''}`,
-			who(auth),
-			{ from: c.stage, to: stage.id }
+		batch.set(
+			activity,
+			entry(
+				'stage',
+				`${from} → ${stage.label}${stage.askReason && reason ? `: ${reason}` : ''}`,
+				by,
+				{
+					from: c.stage,
+					to: stage.id,
+					moveId
+				}
+			)
 		);
-		return { ok: true };
+		await batch.commit();
+		await closeAutomationTasks(id, ['stale-contacts'], moveId);
+		return { ok: true, moveId };
+	},
+
+	'contact.undoMove': async (p: any, auth: any) => {
+		const id = str(p.id, 'id');
+		const moveId = str(p.moveId, 'moveId');
+		const ref = contacts.doc(id);
+		const by = who(auth);
+		return db.runTransaction(async (tx) => {
+			const snap = await tx.get(ref);
+			if (!snap.exists) throw new HttpsError('not-found', 'Contact not found.');
+			const c = snap.data() as Contact;
+			const m = c.lastMove;
+			if (!m || m.id !== moveId || currentMove(c) !== moveId)
+				throw new HttpsError(
+					'failed-precondition',
+					'This move can no longer be undone: the contact has changed since.'
+				);
+			const [closed, created, latest] = await Promise.all([
+				tx.get(tasks.where('closedByMove', '==', moveId)),
+				tx.get(tasks.where('createdByMove', '==', moveId)),
+				tx.get(ref.collection('activity').orderBy('at', 'desc').limit(1))
+			]);
+			// Nothing else happened since the move: its last-activity date and flag go back too.
+			const untouched = latest.docs[0]?.id === m.activityId;
+			const label = (s: string) => stageOf(c.type, s)?.label ?? s;
+			tx.update(ref, {
+				stage: m.from,
+				open: m.prevOpen,
+				stageChangedAt: m.prevStageChangedAt,
+				lostReason: m.prevLostReason ?? deleteField(),
+				changedByUid: m.prevChangedByUid,
+				changedByName: m.prevChangedByName,
+				updatedAt: serverTimestamp(),
+				...(untouched
+					? { lastActivityAt: m.prevLastActivityAt, needsAttention: m.prevNeedsAttention }
+					: {}),
+				lastMove: deleteField(),
+				undoneMove: moveId
+			});
+			for (const t of closed.docs)
+				tx.update(t.ref, {
+					done: false,
+					doneAt: deleteField(),
+					superseded: deleteField(),
+					closedByMove: deleteField()
+				});
+			for (const t of created.docs) tx.delete(t.ref);
+			tx.set(
+				ref.collection('activity').doc(),
+				entry('stage', `Undid move ${label(m.from)} → ${label(m.to)}`, by, {
+					from: m.to,
+					to: m.from
+				})
+			);
+			return { ok: true, reopened: closed.size, deleted: created.size };
+		});
 	},
 
 	'contact.nextStep': async (p: any, auth: any) => {
@@ -388,14 +534,17 @@ export const actions = {
 	'contact.assign': async (p: any, auth: any) => {
 		const id = str(p.id, 'id');
 		const ownerUid = str(p.ownerUid, 'ownerUid', false) || null;
+		const doc = await contacts.doc(id).get();
+		if (!doc.exists) throw new HttpsError('not-found', 'Contact not found.');
 		let ownerName: string | null = null;
 		if (ownerUid) {
 			const u = await db.collection('user').doc(ownerUid).get();
 			if (!u.exists) throw new HttpsError('not-found', 'User not found.');
 			ownerName = u.data()?.name || u.data()?.email;
 		}
-		await contacts.doc(id).update({ ownerUid, ownerName, updatedAt: serverTimestamp() });
-		await handOverTasks(id, ownerUid);
+		await doc.ref.update({ ownerUid, ownerName, updatedAt: serverTimestamp() });
+		// No owner: back to whoever last moved it, as a new automation task would go.
+		await handOverTasks(id, ownerUid || (doc.data() as Contact).changedByUid || null);
 		await logActivity(
 			id,
 			'assigned',
@@ -494,7 +643,9 @@ export const actions = {
 			contactName: displayName(c.data() ?? {}),
 			title: str(p.title, 'title'),
 			dueAt: due,
-			assigneeUid: str(p.assigneeUid, 'assigneeUid', false) || auth.uid,
+			// Left out: the caller. Sent empty ("Nobody"): unassigned.
+			assigneeUid:
+				p.assigneeUid === undefined ? auth.uid : str(p.assigneeUid, 'assigneeUid', false) || null,
 			done: false,
 			source: callVia() === 'claude' ? 'claude' : 'manual',
 			createdAt: serverTimestamp()

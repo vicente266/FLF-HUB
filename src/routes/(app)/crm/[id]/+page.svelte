@@ -1,5 +1,13 @@
 <script lang="ts">
-	import { collection, doc, query, where, orderBy, limit } from 'firebase/firestore';
+	import {
+		collection,
+		doc,
+		query,
+		where,
+		orderBy,
+		limit,
+		getCountFromServer
+	} from 'firebase/firestore';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
@@ -10,6 +18,7 @@
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import FellowProfile from '$lib/components/crm/FellowProfile.svelte';
 	import ReasonDialog from '$lib/components/crm/ReasonDialog.svelte';
+	import MoveNotice from '$lib/components/crm/MoveNotice.svelte';
 	import TaskDialog from '$lib/components/crm/TaskDialog.svelte';
 	import { me } from '$lib/stores';
 	import { db } from '$lib/firebase';
@@ -26,11 +35,11 @@
 	} from '$lib/utils';
 	import {
 		contactSubtitle,
-		askReason,
 		attentionDays,
 		contactTitle,
 		crmBack,
 		crmConfig,
+		moveContact,
 		sourceLabel,
 		stageLabel,
 		typeStyle
@@ -101,6 +110,7 @@
 	let activity = $state<Activity[]>([]);
 	let tasks = $state<Task[]>([]);
 	let closedTasks = $state<Task[]>([]);
+	let closedCount = $state(0);
 	let meetings = $state<CalendarEvent[]>([]);
 	let showClosed = $state(false);
 	let team = $state<TeamUser[]>([]);
@@ -139,17 +149,6 @@
 				),
 				(rows) => (tasks = rows)
 			),
-			// Closed ones apart, newest first, so open tasks are never cut off behind them.
-			listen<Task>(
-				query(
-					collection(db, 'task'),
-					where('contactId', '==', cid),
-					where('done', '==', true),
-					orderBy('dueAt', 'desc'),
-					limit(20)
-				),
-				(rows) => (closedTasks = rows)
-			),
 			listen<CalendarEvent>(
 				query(
 					collection(db, 'event'),
@@ -165,6 +164,36 @@
 			)
 		];
 		return () => unsubs.forEach((u) => u());
+	});
+
+	// Another contact: closed tasks folded again.
+	$effect(() => {
+		void id;
+		showClosed = false;
+	});
+
+	// Closed tasks: a count until unfolded, then a listener (newest first, apart from the open
+	// ones so those are never cut off). The count is read again whenever the open list changes.
+	const closedQuery = (cid: string) =>
+		query(collection(db, 'task'), where('contactId', '==', cid), where('done', '==', true));
+	$effect(() => {
+		const cid = id;
+		void tasks;
+		let alive = true;
+		getCountFromServer(closedQuery(cid))
+			.then((r) => alive && (closedCount = r.data().count))
+			.catch(() => {});
+		return () => {
+			alive = false;
+		};
+	});
+	$effect(() => {
+		const cid = id;
+		if (!showClosed) return;
+		return listen<Task>(
+			query(closedQuery(cid), orderBy('dueAt', 'desc'), limit(20)),
+			(rows) => (closedTasks = rows)
+		);
 	});
 
 	async function act(target: `crm:${string}`, payload: Record<string, unknown>) {
@@ -209,43 +238,30 @@
 		taskOpen = true;
 	}
 
-	// One-click moves stay; the notice offers to undo them for 8 seconds.
+	// A one-click owner change stays; the notice offers to undo it for 8 seconds (stage moves have
+	// the shared MoveNotice).
 	interface Notice {
 		text: string;
 		undo: () => Promise<boolean>;
 	}
-	let stageNotice = $state<Notice | null>(null);
 	let ownerNotice = $state<Notice | null>(null);
-	let stageTimer: ReturnType<typeof setTimeout> | undefined;
 	let ownerTimer: ReturnType<typeof setTimeout> | undefined;
-	function showStage(n: Notice | null) {
-		clearTimeout(stageTimer);
-		stageNotice = n;
-		if (n) stageTimer = setTimeout(() => (stageNotice = null), 8000);
-	}
 	function showOwner(n: Notice | null) {
 		clearTimeout(ownerTimer);
 		ownerNotice = n;
 		if (n) ownerTimer = setTimeout(() => (ownerNotice = null), 8000);
 	}
 	$effect(() => () => {
-		clearTimeout(stageTimer);
 		clearTimeout(ownerTimer);
 		clearTimeout(savedTimer);
 	});
 	// Another contact: no notice from the previous one.
 	$effect(() => {
 		void id;
-		showStage(null);
 		showOwner(null);
 	});
 
 	// The notice goes first, so a second click can't undo twice.
-	function undoStage() {
-		const n = stageNotice;
-		showStage(null);
-		n?.undo();
-	}
 	function undoOwner() {
 		const n = ownerNotice;
 		showOwner(null);
@@ -254,14 +270,7 @@
 
 	async function moveStage(c: Contact, to: { id: string; label: string; askReason?: boolean }) {
 		if (to.id === c.stage) return;
-		const reason = await askReason(to, contactTitle(c));
-		if (reason === null) return;
-		const back = { stage: c.stage, reason: c.lostReason ?? '' };
-		if (!(await act('crm:contact.stage', { id, stage: to.id, reason }))) return;
-		showStage({
-			text: `Moved to ${to.label}`,
-			undo: () => act('crm:contact.stage', { id, ...back })
-		});
+		error = await moveContact(c, to);
 	}
 
 	// "✓ Saved" next to the dropdown that just saved.
@@ -500,21 +509,7 @@
 							</button>
 						{/each}
 					</div>
-					{#if stageNotice}
-						<div
-							class="mt-2 flex items-center gap-2 rounded-md bg-primary-50 px-3 py-1.5 text-sm"
-							role="status"
-						>
-							<span>{stageNotice.text}</span>
-							<span class="text-ink-soft">·</span>
-							<button
-								class="font-semibold text-primary-700 hover:underline"
-								onclick={() => undoStage()}
-							>
-								Undo
-							</button>
-						</div>
-					{/if}
+					<MoveNotice class="mt-2" contactId={c.id} onerror={(m) => (error = m)} />
 					<div class="mt-3 flex flex-wrap items-center gap-3 text-sm">
 						<label for="next-step" class="text-xs font-semibold text-ink-soft">Next step</label>
 						<select
@@ -737,7 +732,7 @@
 						{:else}
 							<li class="px-4 py-3 text-sm text-ink-soft">No open tasks for this contact.</li>
 						{/each}
-						{#if closedTasks.length}
+						{#if closedCount}
 							<li>
 								<button
 									type="button"
@@ -745,7 +740,7 @@
 									onclick={() => (showClosed = !showClosed)}
 								>
 									{showClosed ? 'Hide' : 'Show'}
-									{closedTasks.length}{closedTasks.length === 20 ? '+' : ''} closed
+									{closedCount} closed{showClosed && closedCount > 20 ? ' (latest 20)' : ''}
 								</button>
 							</li>
 							{#if showClosed}
@@ -856,7 +851,7 @@
 						: 'text-ink-soft'}"
 				>
 					{t.dueAt ? `Due ${formatDate(t.dueAt)}` : 'No due date'} · {nameOf(t.assigneeUid) ??
-						'Nobody'}{t.source === 'automation' ? ' · Auto-created' : ''}
+						'Unassigned'}{t.source === 'automation' ? ' · Auto-created' : ''}
 				</div>
 			</div>
 			{#if t.superseded}

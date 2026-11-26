@@ -62,15 +62,21 @@ export async function run(
  */
 const assigneeOf = (c: crm.Contact) => c.ownerUid || c.changedByUid || null;
 
-/** An automation's task. `automationId` lets a later change close it when it no longer applies. */
+/**
+ * An automation's task. `automationId` lets a later change close it when it no longer applies.
+ * Made by a stage move (`moveId`): tagged `createdByMove` for Undo, and only while that move still
+ * stands (checked in a transaction, so an Undo that got there first leaves no task behind). Returns
+ * whether it was made.
+ */
 async function addTask(
 	automationId: string,
 	contactId: string,
 	c: crm.Contact,
 	title: string,
-	days: number
-) {
-	await crm.tasks.add({
+	days: number,
+	moveId?: string
+): Promise<boolean> {
+	const task = {
 		contactId,
 		contactName: crm.displayName(c),
 		title,
@@ -86,7 +92,18 @@ async function addTask(
 		done: false,
 		source: 'automation',
 		automationId,
-		createdAt: serverTimestamp()
+		createdAt: serverTimestamp(),
+		...(moveId ? { createdByMove: moveId } : {})
+	};
+	if (!moveId) {
+		await crm.tasks.add(task);
+		return true;
+	}
+	return db.runTransaction(async (tx) => {
+		const now = (await tx.get(crm.contacts.doc(contactId))).data() as crm.Contact | undefined;
+		if (crm.currentMove(now) !== moveId) return false;
+		tx.create(crm.tasks.doc(), task);
+		return true;
 	});
 }
 
@@ -102,22 +119,39 @@ export async function onStageChanged(id: string, c: crm.Contact) {
 	// The current state: with two quick moves, the handler of the first must not act after the second.
 	const now = (await crm.contacts.doc(id).get()).data() as crm.Contact | undefined;
 	if (!now || now.stage !== c.stage) return;
+	// A move in the Hub: its tasks are tagged for Undo, and an undone move does nothing.
+	const moveId = crm.currentMove(c);
+	if (moveId && crm.currentMove(now) !== moveId) return;
 	// The old stage's tasks close whether or not the follow-up automation is on.
 	// A final stage (Fellow, Lost…) also ends the next-step chase.
 	const final = !!stageOf(now.type as ContactType, now.stage)?.final;
-	const closed = await crm.closeAutomationTasks(id, [
-		'stage-follow-up',
-		'meeting-next-stage',
-		'stale-contacts',
-		...(final ? ['next-step-task'] : [])
-	]);
+	const closed = await crm.closeAutomationTasks(
+		id,
+		[
+			'stage-follow-up',
+			'meeting-next-stage',
+			'stale-contacts',
+			...(final ? ['next-step-task'] : [])
+		],
+		moveId
+	);
 	await run(
 		'stage-follow-up',
 		async () => {
 			const stage = stageOf(now.type as ContactType, now.stage);
 			if (!stage?.followUp || !assigneeOf(now))
 				return closed ? `Closed ${closed} task(s) of the previous stage` : null;
-			await addTask('stage-follow-up', id, now, stage.followUp, stage.followUpDays ?? 3);
+			if (
+				!(await addTask(
+					'stage-follow-up',
+					id,
+					now,
+					stage.followUp,
+					stage.followUpDays ?? 3,
+					moveId
+				))
+			)
+				return null;
 			return `Task "${stage.followUp}" for ${toWhom(now)}${closed ? `; closed ${closed} old` : ''}`;
 		},
 		id

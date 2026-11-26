@@ -49,6 +49,58 @@ export function askReason(
 	});
 }
 
+/** The latest stage move, offering Undo for 8 seconds (`MoveNotice`, on the board and contact page). */
+export const moveNotice = $state<{
+	current: { contactId: string; moveId: string; name: string; stage: string } | null;
+}>({ current: null });
+let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+function showMove(n: (typeof moveNotice)['current']) {
+	clearTimeout(noticeTimer);
+	moveNotice.current = n;
+	if (n) noticeTimer = setTimeout(() => (moveNotice.current = null), 8000);
+}
+
+/**
+ * Move a contact to a stage, asking the reason for a losing one first; `optimistic` shows the move
+ * at once and returns how to take it back on failure. Returns the error text, or null.
+ */
+export async function moveContact(
+	c: { id: string; type: string; name: string; company?: string },
+	to: { id: string; label: string; askReason?: boolean },
+	optimistic?: () => () => void
+): Promise<string | null> {
+	const name = contactTitle(c);
+	const reason = await askReason(to, name);
+	if (reason === null) return null;
+	const rollback = optimistic?.();
+	try {
+		const r = await callAction<{ moveId?: string }>('crm:contact.stage', {
+			id: c.id,
+			stage: to.id,
+			reason
+		});
+		if (r.moveId) showMove({ contactId: c.id, moveId: r.moveId, name, stage: to.label });
+		return null;
+	} catch (e) {
+		rollback?.();
+		return errorText(e);
+	}
+}
+
+/** Undo the move in the notice: the server puts the contact and its tasks back. Error text or null. */
+export async function undoMove(): Promise<string | null> {
+	const n = moveNotice.current;
+	// The notice goes first, so a second click can't undo twice.
+	showMove(null);
+	if (!n) return null;
+	try {
+		await callAction('crm:contact.undoMove', { id: n.contactId, moveId: n.moveId });
+		return null;
+	} catch (e) {
+		return errorText(e);
+	}
+}
+
 /** The CRM list as last shown (tab, view, filters), so a contact's back link returns to it. */
 export const crmBack = $state({ href: '/crm' });
 

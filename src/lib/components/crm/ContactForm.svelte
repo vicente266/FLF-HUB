@@ -12,7 +12,9 @@
 		team = []
 	}: { draft: ContactDraft; config: CrmConfig; creating?: boolean; team?: TeamUser[] } = $props();
 
-	let stages = $derived(config.pipelines[draft.type]?.stages ?? []);
+	// Where a new contact may start: not a losing stage (Lost, Declined), whose reason only a move
+	// asks for.
+	let stages = $derived((config.pipelines[draft.type]?.stages ?? []).filter((s) => !s.askReason));
 	// Another type: its own first stage.
 	$effect(() => {
 		if (creating && !stages.some((s) => s.id === draft.stage)) draft.stage = stages[0]?.id ?? '';

@@ -6,8 +6,6 @@ export const PERMISSIONS = [
 	'crm.any.read',
 	'crm.any.write',
 	'crm.any.delete',
-	'tasks.self.read',
-	'tasks.any.read',
 	'reports.any.read',
 	'automations.any.read',
 	'automations.any.write',
@@ -34,7 +32,7 @@ export interface PermissionInfo {
 	id: Permission;
 	/** The app it belongs to, as the sidebar names it. */
 	app: string;
-	/** What a group with it can do, e.g. "Tasks — everyone's". */
+	/** What a group with it can do, e.g. "CRM — edit". */
 	label: string;
 	/** One line for the Groups screen. */
 	help: string;
@@ -51,7 +49,7 @@ const INFO: Record<Permission, Omit<PermissionInfo, 'id'>> = {
 	'crm.any.read': {
 		app: 'CRM',
 		label: 'CRM — view',
-		help: 'See every contact, its pipeline and its timeline.',
+		help: "See every contact, its pipeline and its timeline, and the whole team's tasks.",
 		opens: true
 	},
 	'crm.any.write': {
@@ -63,18 +61,6 @@ const INFO: Record<Permission, Omit<PermissionInfo, 'id'>> = {
 		app: 'CRM',
 		label: 'CRM — delete contacts',
 		help: 'Delete a contact for good (not the ones imported from the portal).'
-	},
-	'tasks.self.read': {
-		app: 'Tasks',
-		label: 'Tasks — only their own',
-		help: 'See the tasks assigned to them.',
-		opens: true
-	},
-	'tasks.any.read': {
-		app: 'Tasks',
-		label: "Tasks — everyone's",
-		help: "See the whole team's tasks.",
-		opens: true
 	},
 	'reports.any.read': {
 		app: 'Reports',

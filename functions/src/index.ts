@@ -189,6 +189,8 @@ export const crmAction = onCall(
 		'contact.update': { ...crmWrite, handler: crm.actions['contact.update'] },
 		/** Move a contact to another stage of its pipeline. */
 		'contact.stage': { ...crmWrite, handler: crm.actions['contact.stage'] },
+		/** Undo a stage move: the stage, dates and reason before it, its tasks back as they were. */
+		'contact.undoMove': { ...crmWrite, handler: crm.actions['contact.undoMove'] },
 		/** Set a contact's next step (Plan Interaction, Awaiting response), or none. */
 		'contact.nextStep': { ...crmWrite, handler: crm.actions['contact.nextStep'] },
 		/** Give a contact an owner, or none. */
@@ -314,6 +316,8 @@ export const crmContactWritten = onDocumentWritten('contact/{id}', async (event)
 	if (synced(c) && synced(c) !== synced(before)) return;
 	// Created in the Hub: its first stage's follow-up (imports are skipped just above).
 	if (!before) return automations.onStageChanged(event.params.id, c);
+	// An Undo puts the contact back as it was: no stage automation runs for it.
+	if (c.undoneMove && c.undoneMove !== before.undoneMove) return;
 	if (before.stage !== c.stage) await automations.onStageChanged(event.params.id, c);
 	if ((before.nextStep ?? '') !== (c.nextStep ?? ''))
 		await automations.onNextStepChanged(event.params.id, c);

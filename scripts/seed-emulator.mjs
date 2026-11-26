@@ -26,7 +26,6 @@ const GROUPS = {
 		permissions: [
 			'crm.any.read',
 			'crm.any.write',
-			'tasks.self.read',
 			'reports.any.read',
 			'automations.any.read',
 			'connections.any.read',

@@ -85,7 +85,7 @@
 		return `Remove ${firstName(d.user)}'s access to the Hub?`;
 	}
 
-	/** "Can see: CRM, Tasks, Wellbeing…" from the person's role and groups. */
+	/** "Can see: CRM, Reports, Wellbeing…" from the person's role and groups. */
 	function canSee(u: TeamUser): string {
 		if (u.role === 'guest') return 'Can’t use the Hub until you make them a user.';
 		const granted = new Set(

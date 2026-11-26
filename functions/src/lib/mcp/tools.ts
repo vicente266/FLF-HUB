@@ -82,6 +82,16 @@ const iso = (t: unknown): string | null => {
 
 const contactLink = (id: string) => `${SITE_URL}/crm/${id}`;
 
+/** Needs attention, live as the screens show it: open and no activity for STALE_DAYS. */
+const needsAttention = (c: crm.Contact) =>
+	c.open && (c.lastActivityAt?.toMillis?.() ?? Infinity) < Date.now() - STALE_DAYS * 86_400_000;
+
+/** Overdue as the screens show it: a due date that has passed (undated is never overdue). */
+const overdue = (t: FirebaseFirestore.DocumentData) => {
+	const due = t.dueAt?.toMillis?.();
+	return !t.done && typeof due === 'number' && due < Date.now();
+};
+
 /** A contact as list tools show it: no notes, no timeline. */
 function contactRow(id: string, c: crm.Contact) {
 	return {
@@ -101,7 +111,7 @@ function contactRow(id: string, c: crm.Contact) {
 		ownerId: c.ownerUid,
 		source: c.source,
 		tags: c.tags ?? [],
-		needsAttention: c.needsAttention,
+		needsAttention: needsAttention(c),
 		lastActivityAt: iso(c.lastActivityAt),
 		createdAt: iso(c.createdAt),
 		link: contactLink(id)
@@ -193,7 +203,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
 					contact: d.data().contactName,
 					contactId: d.data().contactId,
 					dueAt: iso(d.data().dueAt),
-					overdue: (d.data().dueAt?.toMillis?.() ?? 0) < Date.now()
+					overdue: overdue(d.data())
 				}));
 				await audit(
 					caller,
@@ -261,7 +271,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
 					.filter(({ c }) => {
 						if (a.stage && c.stage !== a.stage) return false;
 						if (owner && c.ownerUid !== owner) return false;
-						if (a.needs_attention !== undefined && c.needsAttention !== a.needs_attention)
+						if (a.needs_attention !== undefined && needsAttention(c) !== a.needs_attention)
 							return false;
 						if (a.open !== undefined && c.open !== a.open) return false;
 						if (!q) return true;
@@ -381,7 +391,6 @@ export function registerTools(server: McpServer, caller: Caller): void {
 					q = q.where('done', '==', false);
 				}
 				const snap = await q.orderBy('dueAt').limit(a.limit).get();
-				const now = Date.now();
 				const rows = snap.docs
 					.map((d) => ({
 						id: d.id,
@@ -391,7 +400,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
 						assigneeId: d.data().assigneeUid,
 						dueAt: iso(d.data().dueAt),
 						done: d.data().done,
-						overdue: !d.data().done && (d.data().dueAt?.toMillis?.() ?? 0) < now,
+						overdue: overdue(d.data()),
 						source: d.data().source,
 						automationId: d.data().automationId ?? null
 					}))
@@ -732,7 +741,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
 				'Move a contact to another stage of its pipeline (stage ids in flf_overview or ' +
 				'flf_get_contact). Entering a stage closes the old stage’s follow-ups and gives the owner ' +
 				'(or, without one, the person moving it) the new one. For Lost or Declined, pass the ' +
-				'reason the person gives.',
+				'reason the person gives. Returns a move_id for flf_undo_stage_move.',
 			inputSchema: z.object({
 				contact_id: ID,
 				stage: z.string().min(1).max(40),
@@ -744,9 +753,31 @@ export function registerTools(server: McpServer, caller: Caller): void {
 			'flf_move_stage',
 			(a) => a.contact_id,
 			async ({ contact_id, stage, reason }) => {
-				await act('crm', 'contact.stage', { id: contact_id, stage, reason });
-				return data({ moved: contact_id, stage });
+				const r = (await act('crm', 'contact.stage', { id: contact_id, stage, reason })) as {
+					moveId?: string;
+				};
+				return data({ moved: contact_id, stage, move_id: r.moveId ?? null });
 			}
+		)
+	);
+
+	server.registerTool(
+		'flf_undo_stage_move',
+		{
+			title: 'Undo stage move',
+			description:
+				'Undo the latest stage move of a contact (move_id from flf_move_stage), as Undo on the ' +
+				'screen: its previous stage, dates and reason come back, the tasks the move closed reopen ' +
+				'and the ones it created are deleted. Only while the contact is still in the stage it ' +
+				'was moved to.',
+			inputSchema: z.object({ contact_id: ID, move_id: ID }),
+			annotations: write
+		},
+		run(
+			'flf_undo_stage_move',
+			(a) => a.contact_id,
+			async ({ contact_id, move_id }) =>
+				data(await act('crm', 'contact.undoMove', { id: contact_id, moveId: move_id }))
 		)
 	);
 
@@ -835,7 +866,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
 					contactId: a.contact_id,
 					title: a.title,
 					dueAt: a.due_date,
-					assigneeUid: a.assignee_id ?? ''
+					assigneeUid: a.assignee_id
 				});
 				return data({ created: true, contactId: a.contact_id });
 			}
@@ -1061,7 +1092,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
 					return { content: [{ type: 'text' as const, text: knowledgeText(r.text) }] };
 				}
 				const r = (await act('core', 'knowledge.list', {})) as {
-					entries: { id: string; description?: string }[];
+					entries: { id: string; chars: number }[];
 					active: string;
 					relevant: { id: string; label: string; topics: string[]; useWhen: string }[];
 				};
@@ -1084,10 +1115,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
 					content.push({
 						type: 'text' as const,
 						text: wrapped({
-							entries: r.entries.map(({ description, ...e }) => ({
-								...e,
-								chars: description?.length ?? 0
-							}))
+							entries: r.entries
 						})
 					});
 				return { content };
