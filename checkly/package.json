@@ -4,6 +4,7 @@
 	"description": "Checkly monitoring as code. Deployed by the Deploy workflow; see README, \"Monitoring\".",
 	"type": "module",
 	"devDependencies": {
-		"checkly": "10.4.0"
+		"checkly": "10.4.0",
+		"jiti": "2.7.0"
 	}
 }
