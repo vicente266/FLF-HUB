@@ -9,7 +9,7 @@ export default defineConfig({
 		// Hourly from one place keeps the browser check inside the free Hobby plan.
 		frequency: Frequency.EVERY_1H,
 		locations: ['eu-west-1'],
-		checkMatch: '**/*.check.ts'
+		checkMatch: '**/*.check.js'
 	},
 	cli: { runLocation: 'eu-west-1' }
 });

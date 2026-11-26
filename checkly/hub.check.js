@@ -12,6 +12,6 @@ new BrowserCheck('hub-opens', {
 	// One retry, so a single network blip isn't reported as the Hub being down.
 	retryStrategy: RetryStrategyBuilder.singleRetry(),
 	code: {
-		entrypoint: path.join(path.dirname(fileURLToPath(import.meta.url)), 'hub.spec.ts')
+		entrypoint: path.join(path.dirname(fileURLToPath(import.meta.url)), 'hub.spec.js')
 	}
 });
