@@ -3,6 +3,8 @@
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import { callAction, errorText } from '$lib/actions';
 	import type { KnowledgeEntry, KnowledgeOption, KnowledgeUseOption } from '$lib/types/knowledge';
+	import { isExpired } from '$lib/components/knowledge/expiry';
+	import { wordCount, wordsOf } from '$lib/components/knowledge/words';
 	import Modal from '$lib/components/shared/Modal.svelte';
 	import FormError from '$lib/components/shared/FormError.svelte';
 
@@ -15,7 +17,9 @@
 		uses,
 		types,
 		audiences,
-		reviewEvery
+		reviewEvery,
+		alwaysWords,
+		alwaysBudget
 	}: {
 		open: boolean;
 		/** The entry to edit, or null to add one. */
@@ -24,6 +28,9 @@
 		types: KnowledgeOption[];
 		audiences: KnowledgeOption[];
 		reviewEvery: number[];
+		/** Words of Always text now, and the most there should be (ALWAYS_BUDGET_WORDS). */
+		alwaysWords: number;
+		alwaysBudget: number;
 	} = $props();
 
 	let draft = $state({
@@ -58,6 +65,16 @@
 				// Made shareable outside FLF: approved again too (as the backend does).
 				(draft.audience === 'external' && (entry?.audience ?? 'internal') !== 'external'))
 	);
+	/** Always words once saved: this entry's (new) length in place of what it counts now. */
+	let alwaysAfter = $derived.by(() => {
+		if (draft.use !== 'always' || !alwaysBudget) return 0;
+		const counted =
+			entry && entry.use === 'always' && entry.status === 'approved' && !isExpired(entry)
+				? wordsOf(entry)
+				: 0;
+		const mine = imported && entry ? wordsOf(entry) : wordCount(draft.description);
+		return alwaysWords - counted + mine;
+	});
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 
@@ -259,6 +276,13 @@
 				</button>
 			</div>
 		</div>
+		{#if alwaysAfter > alwaysBudget}
+			<p class="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm" role="status">
+				Always would come to {alwaysAfter.toLocaleString('en')} words, over the
+				{alwaysBudget.toLocaleString('en')} Claude should read every time. Keep long documents When relevant:
+				Claude reads the index and opens the sections it needs.
+			</p>
+		{/if}
 		{#if backToDraft}
 			<p class="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm" role="status">
 				Saving sends this back to draft until you approve it again{draft.use === 'always'

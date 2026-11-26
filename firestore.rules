@@ -34,6 +34,10 @@ service cloud.firestore {
       allow read: if request.auth != null && (request.auth.token.role == 'admin'
         || (team() && resource.data.audience in ['external', 'internal']));
     }
+    // Knowledge gaps reported by Claude or a person; written by core:knowledge.gap.* only.
+    match /knowledgeGap/{id} {
+      allow read: if team();
+    }
     // Skills (FLF TV, Hub, GitHub, Drive) with their audit; written by core:skills.* only.
     match /skill/{id} {
       allow read: if team();

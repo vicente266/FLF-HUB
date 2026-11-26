@@ -1,8 +1,11 @@
+import { createHash } from 'node:crypto';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { GoogleAuth } from 'google-auth-library';
 import { db } from '../../firestore';
 import { callVia } from '../call-context';
-import { createLogger, serverTimestamp, str } from '../utils';
+import { createLogger, increment, serverTimestamp, str } from '../utils';
+import { fold, sectionText, sectionsOf, wordCount, type Section } from './sections';
+import { searchEntries, MAX_RESULTS } from './search';
 import {
 	DEFAULT_FOLDER_ID,
 	DRIVE_PREFIX,
@@ -20,11 +23,22 @@ import {
 	STATUSES,
 	REVIEW_EVERY,
 	DEFAULT_REVIEW_EVERY,
+	ALWAYS_BUDGET_WORDS,
+	MAX_SECTIONS,
+	INDEX_OUTLINE,
+	MAX_READ_SECTIONS,
+	GAP_COLLECTION,
+	GAP_KINDS,
+	MAX_GAP_NOTE,
+	MAX_GAP_QUERY,
+	MAX_GAP_ENTRIES,
+	GAP_REPEAT_DAYS,
 	typeOfFolder,
 	type Use,
 	type KnowledgeType,
 	type Audience,
-	type Status
+	type Status,
+	type GapKind
 } from './config';
 
 /**
@@ -65,6 +79,9 @@ export interface Knowledge {
 	lastReviewed?: string;
 	/** Months between reviews. */
 	reviewEvery?: number;
+	/** Its outline (headings, no text) and length, stored on save and import. */
+	sections?: Section[];
+	words?: number;
 }
 
 export type Entry = Knowledge & {
@@ -110,11 +127,20 @@ export function rankOf(e: Knowledge): number {
 	return (t < 0 ? TYPES.length : t) * 2 + (statusOf(e) === 'approved' ? 0 : 1) + 1;
 }
 
+/** The date an entry was last approved or reviewed, `YYYY-MM-DD` or ''. */
+const reviewedOn = (e: Knowledge) => e.lastReviewed || e.approvedOn || '';
+/** Its outline and length: stored, or worked out for an entry not saved since outlines exist. */
+const outlineOf = (e: Knowledge): Section[] =>
+	Array.isArray(e.sections) ? e.sections : sectionsOf(e.description ?? '', MAX_SECTIONS);
+const wordsOf = (e: Knowledge) =>
+	typeof e.words === 'number' ? e.words : wordCount(e.description ?? '');
+
 /**
- * One entry as its own `<entry label="…" topics="…" valid_until="…">` block, text verbatim inside,
- * so Claude always sees where an entry starts and ends and its own bullets never run into the next.
+ * One entry as its own `<entry id="…" label="…" topics="…" valid_until="…">` block, text verbatim
+ * inside, so Claude always sees where an entry starts and ends and its own bullets never run into
+ * the next. With `part`, the block holds that one section and names it.
  */
-function toEntry(entry: Knowledge): string {
+function toEntry(entry: Knowledge & { id?: string }, part?: { section: Section; text: string }) {
 	const attr = (s: string) => s.trim().replace(/"/g, "'");
 	const label = entry.label ? attr(entry.label) : '';
 	const topics = (entry.topics ?? []).map(attr).join(', ');
@@ -122,15 +148,17 @@ function toEntry(entry: Knowledge): string {
 	const type = entry.type && entry.type !== 'other' ? entry.type : '';
 	const useWhen = entry.useWhen ? attr(entry.useWhen) : '';
 	const status = statusOf(entry);
-	const decided = entry.lastReviewed || entry.approvedOn || '';
+	const decided = reviewedOn(entry);
 	// An entry's own text can't close its block or open another (or the knowledge frame).
-	const description = (entry.description?.trim() ?? '').replace(
+	const description = ((part ? part.text : entry.description)?.trim() ?? '').replace(
 		/<(\/?)(entry|flf_knowledge)\b/gi,
 		'‹$1$2'
 	);
 	if (!description) return label ? `<entry>\n${label}\n</entry>` : '';
 	const attrs = [
+		entry.id && ` id="${attr(entry.id)}"`,
 		label && ` label="${label}"`,
+		part && ` section="${part.section.id}" section_title="${attr(part.section.title)}"`,
 		type && ` type="${type}"`,
 		` rank="${rankOf(entry)}"`,
 		` status="${status}"`,
@@ -145,46 +173,103 @@ function toEntry(entry: Knowledge): string {
 	return `<entry${attrs}>\n${description}\n</entry>`;
 }
 
+/** What Claude reads Always: approved, use `always`, not expired. */
+const isAlways = (today: string) => (e: Knowledge) => useOf(e) === 'always' && !isExpired(e, today);
+
 /** The entries Claude always reads (use `always`, not expired), one `<entry>` each. */
-export function formatKnowledge(entries: Knowledge[]): string {
-	const today = todayIso();
+export function formatKnowledge(entries: Entry[]): string {
 	return entries
-		.filter((e) => useOf(e) === 'always' && !isExpired(e, today))
+		.filter(isAlways(todayIso()))
 		.sort((a, b) => rankOf(a) - rankOf(b))
-		.map(toEntry)
+		.map((e) => toEntry(e))
 		.filter(Boolean)
 		.join('\n\n');
 }
 
-/** The `relevant` entries Claude can ask for: id, title and topics only. */
+/** Words of Always text: what every flf_get_knowledge carries (ALWAYS_BUDGET_WORDS is the aim). */
+export function alwaysWords(entries: Knowledge[]): number {
+	return entries.filter(isAlways(todayIso())).reduce((n, e) => n + wordsOf(e), 0);
+}
+
+/**
+ * The index of the `relevant` entries Claude can ask for, grouped by type in precedence order.
+ * Read on every flf_get_knowledge, so empty fields are left out and the outline is capped.
+ */
 export function relevantIndex(entries: Entry[]) {
 	const today = todayIso();
-	return entries
+	const rows = entries
 		.filter((e) => useOf(e) === 'relevant' && !isExpired(e, today))
-		.sort((a, b) => rankOf(a) - rankOf(b))
-		.map((e) => ({
+		.sort((a, b) => rankOf(a) - rankOf(b));
+	const typeOf = (e: Knowledge) =>
+		TYPES.some((t) => t.id === e.type) ? (e.type as KnowledgeType) : 'other';
+	const row = (e: Entry) => {
+		const outline = outlineOf(e);
+		return {
 			id: e.id,
-			label: e.label || '(untitled)',
-			type: e.type ?? 'other',
+			title: e.label || '(untitled)',
+			type: typeOf(e),
 			rank: rankOf(e),
 			status: statusOf(e),
-			useWhen: e.useWhen ?? '',
-			topics: e.topics ?? []
-		}));
+			...(e.useWhen ? { use_when: e.useWhen } : {}),
+			...(e.topics?.length ? { topics: e.topics } : {}),
+			words: wordsOf(e),
+			// One section is the whole entry: no outline.
+			...(outline.length > 1
+				? { outline: outline.slice(0, INDEX_OUTLINE).map((s) => `${s.id}: ${s.title}`) }
+				: {}),
+			...(outline.length > INDEX_OUTLINE ? { outline_more: outline.length - INDEX_OUTLINE } : {}),
+			...(reviewedOn(e) ? { reviewed: reviewedOn(e) } : {}),
+			...(reviewDue(e, today) ? { review_due: true } : {}),
+			...(audienceOf(e) !== 'internal' ? { audience: audienceOf(e) } : {})
+		};
+	};
+	return TYPES.map((t) => ({
+		type: t.id,
+		label: t.label,
+		entries: rows.filter((e) => typeOf(e) === t.id).map(row)
+	})).filter((g) => g.entries.length);
 }
 
-/** The full text of the chosen entries (by id, or every one with a topic), never `off` or expired. */
-export function pick(entries: Entry[], ids: string[], topic: string): string {
+/**
+ * The text Claude asked for, never `off` or expired: whole entries (by id, or every one with a
+ * topic) and single sections (`<entryId>#<sectionId>`), strongest rank first. `missing` lists what
+ * was asked for and isn't there (unknown, off, expired or not visible), so Claude can say so.
+ */
+export function pick(
+	entries: Entry[],
+	ids: string[],
+	topic: string,
+	sections: string[] = []
+): { text: string; missing: string[] } {
 	const today = todayIso();
 	const t = topic.trim().toLowerCase();
+	const readable = entries.filter((e) => useOf(e) !== 'off' && !isExpired(e, today));
+	const byId = new Map(readable.map((e) => [e.id, e]));
 	// Asked for by id or topic, so given whatever its status: its status attribute says which.
-	return entries
-		.filter((e) => useOf(e) !== 'off' && !isExpired(e, today))
-		.filter((e) => ids.includes(e.id) || (t && (e.topics ?? []).some((x) => x.toLowerCase() === t)))
-		.sort((a, b) => rankOf(a) - rankOf(b))
-		.map(toEntry)
+	const whole = readable.filter(
+		(e) => ids.includes(e.id) || (t && (e.topics ?? []).some((x) => x.toLowerCase() === t))
+	);
+	const wholeIds = new Set(whole.map((e) => e.id));
+	const missing = ids.filter((id) => !byId.has(id));
+	const blocks = whole.map((e, i) => ({ rank: rankOf(e), order: i, text: toEntry(e) }));
+	for (const [i, ref] of [...new Set(sections)].entries()) {
+		const at = ref.lastIndexOf('#');
+		const e = at > 0 ? byId.get(ref.slice(0, at)) : undefined;
+		// Already read whole in this call.
+		if (e && wholeIds.has(e.id)) continue;
+		const part = e ? sectionText(e.description, ref.slice(at + 1)) : null;
+		if (!e || !part) {
+			missing.push(ref);
+			continue;
+		}
+		blocks.push({ rank: rankOf(e), order: whole.length + i, text: toEntry(e, part) });
+	}
+	const text = blocks
+		.sort((a, b) => a.rank - b.rank || a.order - b.order)
+		.map((b) => b.text)
 		.filter(Boolean)
 		.join('\n\n');
+	return { text, missing };
 }
 
 export async function list(): Promise<Entry[]> {
@@ -209,10 +294,18 @@ export async function list(): Promise<Entry[]> {
 			approvedBy: x.approvedBy ?? '',
 			approvedOn: x.approvedOn ?? '',
 			lastReviewed: x.lastReviewed ?? '',
-			reviewEvery: x.reviewEvery ?? DEFAULT_REVIEW_EVERY
+			reviewEvery: x.reviewEvery ?? DEFAULT_REVIEW_EVERY,
+			sections: outlineOf({ description: x.description ?? '', sections: x.sections }),
+			words: wordsOf({ description: x.description ?? '', words: x.words })
 		};
 	});
 }
+
+/** The outline and word count stored with a text (on save, import and the nightly backfill). */
+const outlineFields = (text: string) => ({
+	sections: sectionsOf(text, MAX_SECTIONS),
+	words: wordCount(text)
+});
 
 const who = (auth: any) => {
 	const name = auth?.token?.name || auth?.token?.email || 'System';
@@ -464,18 +557,47 @@ export async function listDriveFolder(
 	return { folderId: id, files, complete, unshared, folders: seen.size - 1 };
 }
 
-/** A readable file's text (a Google Doc exported as plain text). Read only. */
-export async function textOf(f: DriveFile): Promise<string> {
+/** How a file's text was read: a Google Doc as Markdown (or plain text when Drive refused), else as it is. */
+export type ExportFormat = 'markdown' | 'plain' | 'file';
+
+/**
+ * A readable file's text. Read only. With `markdown`, a Google Doc is exported as Markdown, so its
+ * headings make the entry's sections; if Drive refuses that export, as plain text. Text and
+ * Markdown files are read as they are.
+ */
+export async function readDriveFile(
+	f: DriveFile,
+	markdown: boolean
+): Promise<{ text: string; format: ExportFormat }> {
 	const client = await drive();
-	const url =
-		f.mimeType === DOC
-			? `https://www.googleapis.com/drive/v3/files/${f.id}/export?mimeType=text/plain`
-			: `https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&supportsAllDrives=true`;
-	const res = await client.request<string>({ url, responseType: 'text' });
-	return String(res.data ?? '')
-		.replace(/^\uFEFF/, '')
-		.replace(/\r\n/g, '\n')
-		.trim();
+	const get = async (url: string) =>
+		String((await client.request<string>({ url, responseType: 'text' })).data ?? '')
+			.replace(/^\uFEFF/, '')
+			.replace(/\r\n/g, '\n')
+			.trim();
+	if (f.mimeType !== DOC)
+		return {
+			text: await get(
+				`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&supportsAllDrives=true`
+			),
+			format: 'file'
+		};
+	const exportUrl = (mime: string) =>
+		`https://www.googleapis.com/drive/v3/files/${f.id}/export?mimeType=${encodeURIComponent(mime)}`;
+	if (markdown) {
+		try {
+			return { text: await get(exportUrl('text/markdown')), format: 'markdown' };
+		} catch (err) {
+			// Only Drive answering no falls back; a network failure is thrown as it is.
+			if (!(err as { response?: unknown }).response) throw err;
+		}
+	}
+	return { text: await get(exportUrl('text/plain')), format: 'plain' };
+}
+
+/** A readable file's text, a Google Doc as plain text (Skills, docs/skills.md). Read only. */
+export async function textOf(f: DriveFile): Promise<string> {
+	return (await readDriveFile(f, false)).text;
 }
 
 /**
@@ -486,14 +608,18 @@ export async function textOf(f: DriveFile): Promise<string> {
  */
 export async function importFolder() {
 	// Every entry (the list is settings-sized), read before Drive so entries from before the card get
-	// their defaults even when the folder can't be read (the Knowledge page's audience query needs them).
+	// their defaults even when the folder can't be read (the Knowledge page's audience query needs them),
+	// and entries from before outlines get theirs. Written only when a field is missing.
 	const all = (await collection.get()).docs;
-	for (const d of all.filter((x) => !x.data().audience || !x.data().status))
+	const noOutline = (x: FirebaseFirestore.DocumentData) =>
+		!Array.isArray(x.sections) || typeof x.words !== 'number';
+	for (const d of all.filter((x) => !x.data().audience || !x.data().status || noOutline(x.data())))
 		await d.ref.set(
 			{
 				audience: d.data().audience ?? 'internal',
 				status: d.data().status ?? 'draft',
-				type: d.data().type ?? 'other'
+				type: d.data().type ?? 'other',
+				...(noOutline(d.data()) ? outlineFields(d.data().description ?? '') : {})
 			},
 			{ merge: true }
 		);
@@ -535,13 +661,16 @@ export async function importFolder() {
 			prev &&
 			prev.driveModifiedTime === f.modifiedTime &&
 			prev.label === f.name.slice(0, MAX_LABEL) &&
-			(prev.typeSet || prev.type === folderType)
+			(prev.typeSet || prev.type === folderType) &&
+			// A Google Doc imported before Markdown export is read once more, for its headings.
+			(f.mimeType !== DOC || prev.exportFormat)
 		)
 			continue;
 		// A shortcut to a file not shared with the Hub can't be read: report it, import the rest.
 		let text: string;
+		let exportFormat: ExportFormat;
 		try {
-			text = await textOf(f);
+			({ text, format: exportFormat } = await readDriveFile(f, true));
 		} catch {
 			// Kept if it was imported before (it was taken off the removal list above).
 			skipped.push(`${where(f)} (can't be read: not shared with the Hub)`);
@@ -550,14 +679,17 @@ export async function importFolder() {
 		// Its type from its top subfolder, unless the team set one in the Hub.
 		// Its type follows its folder (moved from Brand to Legal = a policy) unless a person set one.
 		const type = prev?.typeSet && prev.type ? prev.type : folderType;
+		const description = text.slice(0, MAX_IMPORTED);
 		const body = {
 			label: f.name.slice(0, MAX_LABEL),
 			type,
-			description: text.slice(0, MAX_IMPORTED),
+			description,
 			truncated: text.length > MAX_IMPORTED,
+			...outlineFields(description),
 			source: 'drive',
 			url: f.webViewLink,
 			driveModifiedTime: f.modifiedTime,
+			exportFormat,
 			updatedBy: 'Drive import',
 			updatedAt: serverTimestamp()
 		};
@@ -610,6 +742,110 @@ export async function importFolder() {
 	return { files: files.length, imported: readable.length, added, updated, removed, skipped };
 }
 
+// ------------------------------------------------------------------ gaps
+
+/**
+ * Knowledge found missing, contradictory or out of date (docs/knowledge.md, "Gaps"), reported by
+ * Claude while it reads or by a person, and resolved on the Knowledge page.
+ */
+export const gaps = db.collection(GAP_COLLECTION);
+
+/**
+ * Record a gap. The same kind, entries and query (or, with neither, the same note) already open
+ * from the last GAP_REPEAT_DAYS only gets its count bumped, so Claude meeting the same hole in
+ * every conversation makes one row. Reads: the named entries (at most MAX_GAP_ENTRIES, to refuse
+ * ids that don't exist or the reporter can't see) and one `limit(1)` query for the repeat.
+ */
+async function reportGap(p: any, auth: any) {
+	const kind = p?.kind as GapKind;
+	if (!GAP_KINDS.some((k) => k.id === kind))
+		throw new HttpsError('invalid-argument', 'Pick a kind: missing, conflict or outdated.');
+	const note = str(p?.note, 'note');
+	if (note.length > MAX_GAP_NOTE)
+		throw new HttpsError('invalid-argument', `Keep the note under ${MAX_GAP_NOTE} characters.`);
+	const query = str(p?.query, 'query', false);
+	if (query.length > MAX_GAP_QUERY)
+		throw new HttpsError('invalid-argument', `Keep the query under ${MAX_GAP_QUERY} characters.`);
+	const entryIds = Array.isArray(p?.entryIds)
+		? [...new Set<string>(p.entryIds.map((x: unknown) => String(x).trim()).filter(Boolean))].sort()
+		: [];
+	if (entryIds.length > MAX_GAP_ENTRIES)
+		throw new HttpsError('invalid-argument', `Name at most ${MAX_GAP_ENTRIES} entries.`);
+	if (kind !== 'missing' && !entryIds.length)
+		throw new HttpsError('invalid-argument', 'Name the entries that conflict or are out of date.');
+	if (entryIds.length) {
+		const docs = await db.getAll(...entryIds.map((id) => collection.doc(id)));
+		const unknown = docs
+			.filter((d) => !d.exists || !visibleTo(isAdmin(auth))(d.data() as Knowledge))
+			.map((d) => d.id);
+		if (unknown.length)
+			throw new HttpsError('not-found', `No knowledge entry ${unknown.join(', ')}.`);
+	}
+	const norm = (s: string) => fold(s).replace(/\s+/g, ' ').trim();
+	const key = createHash('sha256')
+		.update(
+			JSON.stringify([kind, entryIds, norm(query), entryIds.length || query ? '' : norm(note)])
+		)
+		.digest('hex')
+		.slice(0, 32);
+	const by = who(auth);
+	const since = new Date(Date.now() - GAP_REPEAT_DAYS * 86_400_000);
+	const open = await gaps
+		.where('key', '==', key)
+		.where('status', '==', 'open')
+		.where('createdAt', '>=', since)
+		.limit(1)
+		.get();
+	if (!open.empty) {
+		const d = open.docs[0];
+		await d.ref.update({
+			count: increment(1),
+			lastReportedAt: serverTimestamp(),
+			lastReportedBy: by
+		});
+		logger.log(`gap ${d.id} reported again`);
+		return { id: d.id, repeated: true, count: (d.data().count ?? 1) + 1 };
+	}
+	const added = await gaps.add({
+		kind,
+		note,
+		entryIds,
+		query,
+		key,
+		reportedBy: by,
+		reportedUid: auth?.uid ?? '',
+		via: callVia() === 'claude' ? 'claude' : 'hub',
+		status: 'open',
+		count: 1,
+		resolvedBy: '',
+		resolution: '',
+		createdAt: serverTimestamp(),
+		resolvedAt: null
+	});
+	logger.log(`gap ${added.id} reported (${kind})`);
+	return { id: added.id, repeated: false, count: 1 };
+}
+
+/** Close a gap, with an optional note on what was done. */
+async function resolveGap(p: any, auth: any) {
+	const id = str(p?.id, 'id');
+	const note = str(p?.note, 'note', false);
+	if (note.length > MAX_GAP_NOTE)
+		throw new HttpsError('invalid-argument', `Keep the note under ${MAX_GAP_NOTE} characters.`);
+	const ref = gaps.doc(id);
+	const stored = (await ref.get()).data();
+	if (!stored) throw new HttpsError('not-found', 'Gap not found.');
+	if (stored.status === 'resolved') return { id, resolved: true };
+	await ref.update({
+		status: 'resolved',
+		resolvedBy: who(auth),
+		resolution: note,
+		resolvedAt: serverTimestamp()
+	});
+	logger.log(`gap ${id} resolved`);
+	return { id, resolved: true };
+}
+
 // ------------------------------------------------------------------ actions
 
 export const actions = {
@@ -619,12 +855,14 @@ export const actions = {
 		const today = todayIso();
 		const folder = await folderId();
 		return {
-			// Without the texts (up to 50,000 characters each): the page reads them from Firestore.
+			// Without the texts (up to 50,000 characters each) or outlines: the page reads them from
+			// Firestore, Claude gets the outlines in `relevant`.
 			entries: entries.map((e) => {
-				const { description, ...rest } = e;
+				const { description, sections, ...rest } = e;
 				return {
 					...rest,
 					chars: description.length,
+					sectionCount: sections?.length ?? 0,
 					rank: rankOf(e),
 					expired: isExpired(e, today),
 					reviewDue: reviewDue(e, today)
@@ -632,22 +870,60 @@ export const actions = {
 			}),
 			active: formatKnowledge(entries),
 			relevant: relevantIndex(entries),
+			alwaysWords: alwaysWords(entries),
+			alwaysBudget: ALWAYS_BUDGET_WORDS,
 			folder: { id: folder, url: `https://drive.google.com/drive/folders/${folder}` },
 			uses: USES,
 			types: TYPES,
 			audiences: AUDIENCES,
 			statuses: STATUSES,
-			reviewEvery: REVIEW_EVERY
+			reviewEvery: REVIEW_EVERY,
+			gapKinds: GAP_KINDS
 		};
 	},
 
-	/** The full text of chosen entries: by `ids`, or every entry with `topic`. */
+	/**
+	 * The text of chosen entries: whole by `ids` or `topic`, or single `sections`
+	 * (`<entryId>#<sectionId>`, from the index's outline or a search hit).
+	 */
 	get: async (p: any, auth: any) => {
 		const ids = Array.isArray(p?.ids) ? p.ids.map(String).slice(0, 50) : [];
 		const topic = str(p?.topic, 'topic', false);
-		if (!ids.length && !topic) throw new HttpsError('invalid-argument', 'Give ids or a topic.');
-		return { text: pick((await list()).filter(visibleTo(isAdmin(auth))), ids, topic) };
+		const sections = Array.isArray(p?.sections) ? p.sections.map(String) : [];
+		if (sections.length > MAX_READ_SECTIONS)
+			throw new HttpsError(
+				'invalid-argument',
+				`Ask for at most ${MAX_READ_SECTIONS} sections at a time.`
+			);
+		if (!ids.length && !topic && !sections.length)
+			throw new HttpsError('invalid-argument', 'Give ids, sections or a topic.');
+		return pick((await list()).filter(visibleTo(isAdmin(auth))), ids, topic, sections);
 	},
+
+	/**
+	 * The sections that best match `query` (title, Use when and topics count more than the text;
+	 * ties go to the stronger rank), each with a snippet. In memory over the list: no query of its
+	 * own. Never off, expired or (for anyone but admins) restricted entries.
+	 */
+	search: async (p: any, auth: any) => {
+		const query = str(p?.query, 'query');
+		if (query.length > 200)
+			throw new HttpsError('invalid-argument', 'Keep the query under 200 characters.');
+		const limit = Math.min(Math.max(Number(p?.limit) || 5, 1), MAX_RESULTS);
+		const today = todayIso();
+		const entries = (await list())
+			.filter(visibleTo(isAdmin(auth)))
+			.filter((e) => useOf(e) !== 'off' && !isExpired(e, today));
+		const hits = searchEntries(
+			entries.map((e) => ({ ...e, rank: rankOf(e) })),
+			query,
+			limit
+		);
+		return { query, hits };
+	},
+
+	'gap.report': async (p: any, auth: any) => reportGap(p, auth),
+	'gap.resolve': async (p: any, auth: any) => resolveGap(p, auth),
 
 	/**
 	 * Create (no id) or update an entry; returns its id. On an imported entry its card, use, topics
@@ -719,7 +995,15 @@ export const actions = {
 			logger.log(`updated card of ${id}`);
 			return { id };
 		}
-		const body = { ...clean(entry), ...card, ...typeSet, source: 'hub', ...meta };
+		const cleaned = clean(entry);
+		const body = {
+			...cleaned,
+			...outlineFields(cleaned.description),
+			...card,
+			...typeSet,
+			source: 'hub',
+			...meta
+		};
 		if (ref) {
 			await ref.set(body, { merge: true });
 			logger.log(`updated ${id}`);

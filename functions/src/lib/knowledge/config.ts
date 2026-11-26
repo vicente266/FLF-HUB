@@ -132,3 +132,30 @@ export const MAX_USE_WHEN = 300;
 /** Months between reviews of an approved entry. */
 export const REVIEW_EVERY = [3, 6, 12] as const;
 export const DEFAULT_REVIEW_EVERY = 6;
+
+/**
+ * Words of "Always" text Claude should get with every flf_get_knowledge. Past it, the page warns:
+ * long documents belong in When relevant, where Claude reads the index and opens what it needs.
+ */
+export const ALWAYS_BUDGET_WORDS = 3000;
+
+/** Sections kept in an entry's stored outline (docs/knowledge.md, "Sections"). */
+export const MAX_SECTIONS = 100;
+/** Sections of one entry shown in Claude's index (the outline is read on every call). */
+export const INDEX_OUTLINE = 25;
+/** Sections one knowledge.get may ask for (`<entryId>#<sectionId>`). */
+export const MAX_READ_SECTIONS = 20;
+
+/** Knowledge Claude (or a person) found missing, contradictory or out of date. */
+export const GAP_COLLECTION = 'knowledgeGap';
+export const GAP_KINDS = [
+	{ id: 'missing', label: 'Missing', help: 'Nothing in Knowledge answers it.' },
+	{ id: 'conflict', label: 'Conflict', help: 'Two entries say different things.' },
+	{ id: 'outdated', label: 'Outdated', help: 'An entry is no longer true.' }
+] as const;
+export type GapKind = (typeof GAP_KINDS)[number]['id'];
+export const MAX_GAP_NOTE = 1000;
+export const MAX_GAP_QUERY = 300;
+export const MAX_GAP_ENTRIES = 10;
+/** The same gap reported again within this many days only bumps the open report's count. */
+export const GAP_REPEAT_DAYS = 7;

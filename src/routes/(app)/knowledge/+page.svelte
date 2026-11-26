@@ -16,29 +16,57 @@
 	import { me } from '$lib/stores';
 	import type {
 		KnowledgeEntry,
+		KnowledgeGap,
+		KnowledgeIndexGroup,
 		KnowledgeOption,
 		KnowledgeUse,
 		KnowledgeUseOption
 	} from '$lib/types/knowledge';
 	import { isExpired } from '$lib/components/knowledge/expiry';
+	import { wordsOf } from '$lib/components/knowledge/words';
 	import KnowledgeModal from '$lib/components/knowledge/KnowledgeModal.svelte';
+	import GapsPanel from '$lib/components/knowledge/GapsPanel.svelte';
 	import Modal from '$lib/components/shared/Modal.svelte';
 	import FormError from '$lib/components/shared/FormError.svelte';
 	import Empty from '$lib/components/shared/Empty.svelte';
 
 	setTitle('Knowledge', 'What Claude knows about FLF, and the skills it and the agents use');
 
-	// Two tabs: the knowledge entries and the skills; the tab is kept in the address (?tab=skills).
+	// Tabs: the knowledge entries, the skills and the gaps; the tab is kept in the address (?tab=gaps).
+	type Tab = 'knowledge' | 'skills' | 'gaps';
 	const canSkills = hasPermission('skills.any.read');
-	let tab = $derived(
-		canSkills && page.url.searchParams.get('tab') === 'skills' ? 'skills' : 'knowledge'
-	);
-	function openTab(t: 'knowledge' | 'skills') {
+	let tab = $derived.by((): Tab => {
+		const t = page.url.searchParams.get('tab');
+		if (t === 'skills' && canSkills) return 'skills';
+		if (t === 'gaps') return 'gaps';
+		return 'knowledge';
+	});
+	const tabs: [Tab, string][] = [
+		['knowledge', 'Knowledge'],
+		...(canSkills ? [['skills', 'Skills'] as [Tab, string]] : []),
+		['gaps', 'Gaps']
+	];
+	function openTab(t: Tab) {
 		const url = new URL(page.url);
-		if (t === 'skills') url.searchParams.set('tab', 'skills');
-		else url.searchParams.delete('tab');
+		if (t === 'knowledge') url.searchParams.delete('tab');
+		else url.searchParams.set('tab', t);
 		goto(url, { replaceState: true, noScroll: true, keepFocus: true });
 	}
+
+	// Open gaps, newest first: the Gaps tab and its badge. One bounded listener.
+	const GAP_LIMIT = 100;
+	let gaps = $state<KnowledgeGap[]>([]);
+	$effect(() =>
+		listen<KnowledgeGap>(
+			query(
+				collection(db, 'knowledgeGap'),
+				where('status', '==', 'open'),
+				orderBy('createdAt', 'desc'),
+				limit(GAP_LIMIT)
+			),
+			(rows) => (gaps = rows)
+		)
+	);
 
 	const canWrite = hasPermission('knowledge.any.write');
 	let entries = $state<KnowledgeEntry[]>([]);
@@ -74,6 +102,9 @@
 	let audiences = $state<KnowledgeOption[]>([]);
 	let reviewEvery = $state<number[]>([]);
 	let folder = $state<{ id: string; url: string } | null>(null);
+	let gapKinds = $state<KnowledgeOption[]>([]);
+	/** Words of Always text Claude should get at most (ALWAYS_BUDGET_WORDS in the backend). */
+	let alwaysBudget = $state(0);
 	onMount(() => {
 		callAction<{
 			uses: KnowledgeUseOption[];
@@ -81,6 +112,8 @@
 			audiences: KnowledgeOption[];
 			reviewEvery: number[];
 			folder: { id: string; url: string };
+			gapKinds: KnowledgeOption[];
+			alwaysBudget: number;
 		}>('core:knowledge.list')
 			.then((r) => {
 				uses = r.uses;
@@ -88,6 +121,8 @@
 				audiences = r.audiences;
 				reviewEvery = r.reviewEvery;
 				folder = r.folder;
+				gapKinds = r.gapKinds;
+				alwaysBudget = r.alwaysBudget;
 			})
 			.catch((e) => (error = errorText(e)));
 	});
@@ -114,6 +149,11 @@
 		relevant: current.filter((e) => useOf(e) === 'relevant').length,
 		off: current.filter((e) => useOf(e) === 'off').length
 	});
+	// Live, as knowledge.list counts it: what every flf_get_knowledge carries.
+	let alwaysWords = $derived(
+		current.filter((e) => useOf(e) === 'always').reduce((n, e) => n + wordsOf(e), 0)
+	);
+	let overBudget = $derived(alwaysBudget > 0 && alwaysWords > alwaysBudget);
 	// Filters and sort, all on this one table (no extra clicks).
 	let search = $state('');
 	let typeFilter = $state('');
@@ -238,7 +278,8 @@
 	let claudeOpen = $state(false);
 	let claude = $state<{
 		active: string;
-		relevant: { label: string; topics: string[]; useWhen: string }[];
+		relevant: KnowledgeIndexGroup[];
+		alwaysWords: number;
 	} | null>(null);
 	let claudeError = $state<string | null>(null);
 	async function showClaude() {
@@ -289,28 +330,38 @@
 	};
 </script>
 
-{#if canSkills}
-	<div
-		class="mx-auto mb-4 flex w-fit max-w-7xl rounded-lg border border-line/70 bg-white p-0.5"
-		role="tablist"
-	>
-		{#each [['knowledge', 'Knowledge'], ['skills', 'Skills']] as [value, label] (value)}
-			<button
-				role="tab"
-				aria-selected={tab === value}
-				class="rounded-md px-4 py-1.5 text-sm font-semibold {tab === value
-					? 'bg-primary-600 text-white'
-					: 'text-ink-soft'}"
-				onclick={() => openTab(value as 'knowledge' | 'skills')}
-			>
-				{label}
-			</button>
-		{/each}
-	</div>
-{/if}
+<div
+	class="mx-auto mb-4 flex w-fit max-w-7xl rounded-lg border border-line/70 bg-white p-0.5"
+	role="tablist"
+>
+	{#each tabs as [value, label] (value)}
+		<button
+			role="tab"
+			aria-selected={tab === value}
+			class="flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-semibold {tab === value
+				? 'bg-primary-600 text-white'
+				: 'text-ink-soft'}"
+			onclick={() => openTab(value)}
+		>
+			{label}
+			{#if value === 'gaps' && gaps.length}
+				<span
+					class="rounded-full px-1.5 text-xs {tab === value
+						? 'bg-white/25'
+						: 'bg-warning/15 text-warning'}"
+					title="Open gaps"
+				>
+					{gaps.length >= GAP_LIMIT ? `${GAP_LIMIT}+` : gaps.length}
+				</span>
+			{/if}
+		</button>
+	{/each}
+</div>
 
 {#if tab === 'skills'}
 	<SkillsPanel />
+{:else if tab === 'gaps'}
+	<GapsPanel {gaps} {entries} kinds={gapKinds} {canWrite} onOpen={open} />
 {:else}
 	<div class="mx-auto max-w-7xl space-y-4">
 		<FormError message={error} />
@@ -330,6 +381,16 @@
 				<span class="text-xs text-ink-soft">
 					Claude: {counts.always} always · {counts.relevant} when relevant · {counts.off} off
 				</span>
+				{#if alwaysBudget}
+					<span
+						class="text-xs {overBudget ? 'font-semibold text-warning' : 'text-ink-soft'}"
+						title="Every time Claude reads Knowledge it gets all the Always text first"
+					>
+						Always: {alwaysWords.toLocaleString('en')} words of {alwaysBudget.toLocaleString('en')}
+						{#if overBudget}· move long documents to When relevant: Claude reads the index and opens
+							what it needs{/if}
+					</span>
+				{/if}
 			</div>
 			<div class="flex flex-wrap items-center gap-2 text-xs">
 				<span class="flex items-center gap-1.5 text-ink-soft">
@@ -478,6 +539,11 @@
 										{:else}
 											Hub
 										{/if}
+										<span title="Length; long entries are read by section">
+											{wordsOf(e).toLocaleString('en')} words{(e.sections?.length ?? 0) > 1
+												? ` · ${e.sections?.length} sections`
+												: ''}
+										</span>
 										{#each (e.topics ?? []).slice(e.source === 'drive' ? 1 : 0) as t (t)}
 											<span>#{t}</span>
 										{/each}
@@ -593,7 +659,16 @@
 	</div>
 {/if}
 
-<KnowledgeModal bind:open={editOpen} entry={editing} {uses} {types} {audiences} {reviewEvery} />
+<KnowledgeModal
+	bind:open={editOpen}
+	entry={editing}
+	{uses}
+	{types}
+	{audiences}
+	{reviewEvery}
+	{alwaysWords}
+	{alwaysBudget}
+/>
 
 <Modal bind:open={previewOpen} title={preview?.label || 'Entry'} width="max-w-2xl">
 	{#if preview}
@@ -615,25 +690,45 @@
 			approved {types[1]?.label ?? 'Decisions'}…), so it runs to {types.length * 2}, not to the {types.length}
 			types.
 		</p>
+		<p class="mb-1 text-xs {overBudget ? 'font-semibold text-warning' : 'text-ink-soft'}">
+			{claude.alwaysWords.toLocaleString('en')} words of {alwaysBudget.toLocaleString('en')}.
+		</p>
 		<pre
 			class="max-h-[45vh] overflow-auto rounded-lg bg-canvas px-3 py-2 text-xs whitespace-pre-wrap">{claude.active ||
 				'(nothing set to Always)'}</pre>
 		<p class="mt-3 mb-1 text-xs text-ink-soft">
-			<strong>When relevant:</strong> Claude sees only these titles and topics, and asks for the text
-			when the task needs it.
+			<strong>When relevant:</strong> Claude gets this index, grouped by type and strongest first, and
+			reads what the task needs: a whole entry, single sections (from the outline) or passages it finds
+			with search. It also reports what it can't find as a Gap.
 		</p>
 		{#if claude.relevant.length}
-			<ul class="space-y-0.5 text-sm">
-				{#each claude.relevant as r (r.label + r.topics.join())}
-					<li>
-						{r.label}{#if r.useWhen}<span class="text-xs text-ink">
-								· {r.useWhen}
-							</span>{/if}{#if r.topics.length}<span class="text-xs text-ink-soft">
-								· {r.topics.join(', ')}
-							</span>{/if}
-					</li>
+			<div class="max-h-[40vh] space-y-2 overflow-auto">
+				{#each claude.relevant as g (g.type)}
+					<div>
+						<div class="text-xs font-semibold text-ink-soft">{g.label}</div>
+						<ul class="space-y-0.5 text-sm">
+							{#each g.entries as r (r.id)}
+								<li>
+									{r.title}<span class="text-xs text-ink-soft">
+										{` · ${r.words} words`}{r.status === 'draft' ? ' · draft' : ''}{r.review_due
+											? ' · review due'
+											: ''}
+									</span>{#if r.use_when}<span class="text-xs text-ink">
+											{` · ${r.use_when}`}
+										</span>{/if}
+									{#if r.outline?.length}
+										<div class="text-xs text-ink-soft">
+											{r.outline.length}{r.outline_more ? `+${r.outline_more}` : ''} sections: {r.outline
+												.map((o) => o.slice(o.indexOf(': ') + 2))
+												.join(' · ')}
+										</div>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+					</div>
 				{/each}
-			</ul>
+			</div>
 		{:else}
 			<p class="text-sm text-ink-soft">(nothing set to When relevant)</p>
 		{/if}

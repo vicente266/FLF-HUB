@@ -32,6 +32,63 @@ export interface KnowledgeEntry {
 	approvedOn?: string;
 	lastReviewed?: string;
 	reviewEvery?: number;
+	/** Its outline (headings, no text), stored on save and import. */
+	sections?: KnowledgeSection[];
+	/** Its length in words, stored with the outline. */
+	words?: number;
+}
+
+/** One heading of an entry's outline (docs/knowledge.md, "Sections"). */
+export interface KnowledgeSection {
+	id: string;
+	title: string;
+	level: number;
+	chars: number;
+	words: number;
+}
+
+/** One "When relevant" entry in Claude's index, as knowledge.list returns it. */
+export interface KnowledgeIndexRow {
+	id: string;
+	title: string;
+	type: string;
+	rank: number;
+	status: 'draft' | 'approved';
+	use_when?: string;
+	topics?: string[];
+	words: number;
+	outline?: string[];
+	outline_more?: number;
+	reviewed?: string;
+	review_due?: boolean;
+	audience?: string;
+}
+
+/** Claude's index: the "When relevant" entries grouped by type, in precedence order. */
+export interface KnowledgeIndexGroup {
+	type: string;
+	label: string;
+	entries: KnowledgeIndexRow[];
+}
+
+/** Knowledge found missing, contradictory or out of date, reported by Claude or a person. */
+export interface KnowledgeGap {
+	id: string;
+	kind: 'missing' | 'conflict' | 'outdated';
+	note: string;
+	entryIds: string[];
+	query: string;
+	reportedBy: string;
+	via: 'claude' | 'hub';
+	status: 'open' | 'resolved';
+	/** Times reported while open (a repeat within 7 days only bumps it). */
+	count?: number;
+	lastReportedAt?: unknown;
+	resolvedBy?: string;
+	/** The note left on resolving. */
+	resolution?: string;
+	createdAt?: unknown;
+	resolvedAt?: unknown;
 }
 
 /** A choice defined in the backend config (type, audience), with its help text. */

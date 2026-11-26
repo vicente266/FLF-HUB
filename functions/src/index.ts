@@ -131,8 +131,20 @@ export const coreAction = onCall(
 		'knowledge.save': { permission: 'knowledge.any.write', handler: knowledge.actions.save },
 		/** Delete a Knowledge entry. */
 		'knowledge.delete': { permission: 'knowledge.any.write', handler: knowledge.actions.delete },
-		/** The full text of chosen entries (by ids or topic), for Claude's "when relevant" ones. */
+		/** The text of chosen entries (by ids, topic or `<entryId>#<sectionId>`), for Claude's "when relevant" ones. */
 		'knowledge.get': { permission: 'knowledge.any.read', handler: knowledge.actions.get },
+		/** The Knowledge sections that best match a query, with a snippet each (in memory, no query). */
+		'knowledge.search': { permission: 'knowledge.any.read', handler: knowledge.actions.search },
+		/** Report missing, conflicting or outdated knowledge (readers report while they read). */
+		'knowledge.gap.report': {
+			permission: 'knowledge.any.read',
+			handler: knowledge.actions['gap.report']
+		},
+		/** Resolve a reported knowledge gap, with an optional note. */
+		'knowledge.gap.resolve': {
+			permission: 'knowledge.any.write',
+			handler: knowledge.actions['gap.resolve']
+		},
 		/** Import the Knowledge Drive folder now (read only on Drive). */
 		'knowledge.sync': { permission: 'knowledge.any.write', handler: knowledge.actions.sync },
 		/** The Claude consent page: which app asks and where it sends you back. Writes nothing. */

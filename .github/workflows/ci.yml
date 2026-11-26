@@ -73,6 +73,8 @@ jobs:
         run: npm test
       - name: Skills audit (pure, no emulator)
         run: npm run test:skills
+      - name: Knowledge sections and search (pure, no emulator)
+        run: npm run test:knowledge
 
   tv-worker:
     name: FLF TV worker (types and self-test)
