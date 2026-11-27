@@ -83,11 +83,13 @@
 			automations: AutomationDef[];
 			n8n: N8nAutomation[];
 			connections: { id: string; name: string }[];
-		}>('automations:config.get').then((r) => {
-			defs = r.automations;
-			n8nDefs = r.n8n;
-			connectionNames = Object.fromEntries(r.connections.map((c) => [c.id, c.name]));
-		});
+		}>('automations:config.get')
+			.then((r) => {
+				defs = r.automations;
+				n8nDefs = r.n8n;
+				connectionNames = Object.fromEntries(r.connections.map((c) => [c.id, c.name]));
+			})
+			.catch((e) => (error = errorText(e)));
 		loadN8n();
 		const unsubs = [
 			listen<State>(
@@ -205,8 +207,9 @@
 				<div class="mt-3 flex justify-between border-t border-line/50 pt-2 text-xs text-ink-soft">
 					<span>
 						Last run {formatDateTime(s?.lastRunAt)} · {s?.runs ?? 0}
-						{s?.runs === 1 ? 'run' : 'runs'}{#if s?.errors}
-							· <span class="text-danger">{s.errors} failed</span>{/if}
+						{s?.runs === 1 ? 'run' : 'runs'}{#if s?.errors}<span class="ml-1">
+								· <span class="text-danger">{s.errors} failed</span>
+							</span>{/if}
 					</span>
 					{#if s?.lastError}<span class="truncate pl-2 text-danger" title={s.lastError}>
 							{s.lastError}

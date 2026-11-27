@@ -6,11 +6,12 @@ foundations), grouped by strategy.
 ## Partners (in the CRM)
 
 - A fourth contact type, **Partner**, with its own pipeline: Targets → Contacted → In conversation →
-  Proposal → Partners / Lost (follow-up task per stage, as for the other types). Defined in
+  Proposal → Active Partner / Lost (follow-up task per stage, as for the other types). Defined in
   `functions/src/lib/crm/config.ts`.
 - On a Partner, **company is the organisation** (required) and **name is the main contact**
-  (optional; empty until there is one). Screens title a Partner by its organisation, and tasks and
-  messages use the main contact's name or, without one, the organisation (`displayName`). Email,
+  (optional; empty until there is one). Screens title a Partner by its organisation, and tasks, meetings and
+  automation results name it "Organisation (Main contact)", or the organisation alone without one
+  (`displayName`). Email,
   phone and LinkedIn are the main contact's. Other contact types still need a name.
 - `segment` and `strategyId` are only stored on Partners; the strategy is checked only when it
   changes, so a Partner whose strategy was deleted can still be edited.

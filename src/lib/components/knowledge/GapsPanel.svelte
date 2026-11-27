@@ -11,6 +11,7 @@
 	import Modal from '$lib/components/shared/Modal.svelte';
 	import FormError from '$lib/components/shared/FormError.svelte';
 	import Empty from '$lib/components/shared/Empty.svelte';
+	import { titleOf } from './words';
 
 	let {
 		gaps,
@@ -157,10 +158,12 @@
 										class="font-semibold text-primary-700 hover:underline"
 										onclick={() => onOpen(e)}
 									>
-										{e.label || id}
+										{titleOf(e)}
 									</button>
 								{:else}
-									<span class="text-ink-soft" title="Deleted, or not visible to you">{id}</span>
+									<span class="text-ink-soft" title="Deleted, or not visible to you">
+										(an entry you can’t see)
+									</span>
 								{/if}
 							{/each}
 						</div>
@@ -249,7 +252,7 @@
 				</span>
 			</label>
 			<select id="gap-entries" class="input" multiple size="6" bind:value={draft.entryIds}>
-				{#each entries as e (e.id)}<option value={e.id}>{e.label || e.id}</option>{/each}
+				{#each entries as e (e.id)}<option value={e.id}>{titleOf(e)}</option>{/each}
 			</select>
 		</div>
 		<div>

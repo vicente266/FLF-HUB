@@ -249,8 +249,14 @@
 		}
 	}
 	async function loadSkill(id: 'clipping' | 'brand') {
-		loaded(id, await callAction<TvSkill>('core:tv.skill.get', { id }));
+		try {
+			loaded(id, await callAction<TvSkill>('core:tv.skill.get', { id }));
+		} catch (e) {
+			error = errorText(e);
+		}
 	}
+	/** A Skill save or reset that failed: shown next to its buttons, not at the top of the page. */
+	let skillError = $state<string | null>(null);
 	const dirtyOf = (id: 'clipping' | 'brand') =>
 		!!skill[id] &&
 		(text[id] !== skill[id]!.text || (id === 'brand' && JSON.stringify(brand) !== savedBrand));
@@ -265,17 +271,19 @@
 	onMount(() => {
 		callAction<{ defaultBrand: TvBrand; staleMs: { video: number; clip: number } }>(
 			'core:tv.config.get'
-		).then((c) => {
-			defaults = c.defaultBrand;
-			staleMs = c.staleMs;
-		});
+		)
+			.then((c) => {
+				defaults = c.defaultBrand;
+				staleMs = c.staleMs;
+			})
+			.catch((e) => (error = errorText(e)));
 		loadSkill('clipping');
 		loadSkill('brand');
 	});
 	async function saveSkill() {
 		const id = skillTab;
 		saving = true;
-		error = null;
+		skillError = null;
 		saved = null;
 		try {
 			const s = await callAction<TvSkill>('core:tv.skill.save', {
@@ -286,7 +294,7 @@
 			loaded(id, s);
 			saved = `Saved as version ${s.version}. The next video uses it.`;
 		} catch (e) {
-			error = errorText(e);
+			skillError = errorText(e);
 		} finally {
 			saving = false;
 		}
@@ -294,7 +302,14 @@
 	async function resetSkill() {
 		const id = skillTab;
 		if (!confirm('Go back to the built-in version? Your edits are lost.')) return;
-		loaded(id, await callAction<TvSkill>('core:tv.skill.reset', { id }));
+		skillError = null;
+		saved = null;
+		try {
+			loaded(id, await callAction<TvSkill>('core:tv.skill.reset', { id }));
+			saved = 'Back to the built-in version. The next video uses it.';
+		} catch (e) {
+			skillError = errorText(e);
+		}
 	}
 	const BRAND_FIELDS: [string, string][] = [
 		['highlightColor', 'Spoken word colour'],
@@ -332,6 +347,7 @@
 					onclick={() => {
 						tab = value;
 						saved = null;
+						error = null;
 					}}
 				>
 					{label}
@@ -419,13 +435,14 @@
 									<ExternalLink class="h-4 w-4" />
 								</a>
 								{#if canAct(video)}
-									<button
-										class="btn-ghost"
-										title="Transcribe it again and propose new clips with the current Skill"
-										onclick={() => runAgain(video!)}
-									>
-										<RefreshCw class="h-4 w-4" /> Run again
-									</button>
+									<!-- A queued video hasn't started: running it again would change nothing. -->
+									{#if video.status !== 'queued'}<button
+											class="btn-ghost"
+											title="Transcribe it again and propose new clips with the current Skill"
+											onclick={() => runAgain(video!)}
+										>
+											<RefreshCw class="h-4 w-4" /> Run again
+										</button>{/if}
 									<button
 										class="btn-ghost px-2 text-danger"
 										title="Delete"
@@ -511,6 +528,7 @@
 					onclick={() => {
 						skillTab = value as 'clipping' | 'brand';
 						saved = null;
+						skillError = null;
 					}}
 				>
 					{label}
@@ -553,6 +571,7 @@
 						>
 							{#if dirtyOf(skillTab)}Unsaved edits{:else if saved}{saved}{/if}
 						</span>
+						{#if skillError}<span class="text-xs font-semibold text-danger">{skillError}</span>{/if}
 						{#if s && !s.isDefault}<button class="btn-ghost" onclick={resetSkill}>
 								Built-in version
 							</button>{/if}

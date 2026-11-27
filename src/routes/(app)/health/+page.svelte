@@ -27,6 +27,15 @@
 	onMount(load);
 
 	const canResolve = hasPermission('automations.any.write');
+	// Names link to pages only for people who can open them.
+	const canConnections = hasPermission('connections.any.read');
+	const canAutomations = hasPermission('automations.any.read');
+	function automationLabel(a: Health['automations'][number]) {
+		if (!a.enabled) return 'Off';
+		if (a.lastError) return 'Last run failed';
+		if (a.late) return 'Not running';
+		return 'On';
+	}
 	async function resolve(id: string) {
 		error = null;
 		try {
@@ -107,7 +116,9 @@
 					{#each health.connections as c (c.id)}
 						<tr>
 							<td class="w-48 px-4 py-2 align-top font-medium">
-								<a href="/connections?open={c.id}" class="hover:text-primary-700">{c.name}</a>
+								{#if canConnections}
+									<a href="/connections?open={c.id}" class="hover:text-primary-700">{c.name}</a>
+								{:else}{c.name}{/if}
 							</td>
 							<td class="w-36 px-4 py-2 align-top">
 								<StatusDot level={c.level} label={STATUS[c.status] ?? c.status} />
@@ -117,12 +128,14 @@
 									<p class="text-sm text-ink">
 										<span class="font-semibold">What to do:</span>
 										{c.hint}
-										<a
-											href="/connections?open={c.id}"
-											class="font-semibold whitespace-nowrap text-primary-700 hover:underline"
-										>
-											Open {c.name}
-										</a>
+										{#if canConnections}
+											<a
+												href="/connections?open={c.id}"
+												class="font-semibold whitespace-nowrap text-primary-700 hover:underline"
+											>
+												Open {c.name}
+											</a>
+										{/if}
 									</p>
 									{#if c.detail}
 										<details class="mt-0.5">
@@ -150,17 +163,21 @@
 					{#each health.automations as a (a.id)}
 						<tr>
 							<td class="w-48 px-4 py-2 font-medium">
-								<a href="/automations" class="hover:text-primary-700">{a.name}</a>
+								{#if canAutomations}
+									<a href="/automations" class="hover:text-primary-700">{a.name}</a>
+								{:else}{a.name}{/if}
 							</td>
 							<td class="w-36 px-4 py-2">
-								<StatusDot
-									level={a.level}
-									label={a.enabled ? (a.lastError ? 'Last run failed' : 'On') : 'Off'}
-								/>
+								<StatusDot level={a.level} label={automationLabel(a)} />
 							</td>
 							<td class="px-4 py-2 text-xs {a.lastError ? 'text-danger' : 'text-ink-soft'}">
-								{a.lastError ??
-									`${a.runs} ${a.runs === 1 ? 'run' : 'runs'} · ${a.errors} ${a.errors === 1 ? 'error' : 'errors'}`}
+								{#if a.lastError}{a.lastError}
+								{:else if a.late}<span class="text-warning">
+										Hasn't run for over 2 days: the schedule may have stopped. Tell a developer.
+									</span>
+								{:else}{a.runs}
+									{a.runs === 1 ? 'run' : 'runs'} · {a.errors}
+									{a.errors === 1 ? 'error' : 'errors'}{/if}
 								{#if a.lastError && canResolve}
 									<button
 										class="ml-2 font-semibold text-primary-700 hover:underline"

@@ -26,6 +26,19 @@ export interface SpannedSection extends Section {
 }
 
 /** The id of the text before the first heading. */
+/** A line of Markdown as plain text: no heading, list, quote or emphasis markers. */
+export const plainLine = (line: string) =>
+	line
+		.replace(/^\s*(#{1,6}|[-*+]|>|\d+[.)])\s+/, '')
+		.replace(/[*_`]+/g, '')
+		.trim();
+
+/** An entry's name everywhere: its title, else its first line as plain text. */
+export function titleOf(e: { label?: string; description?: string }): string {
+	const first = (e.description ?? '').split('\n').map(plainLine).find(Boolean);
+	return e.label || (first ? first.slice(0, 80) : '(untitled)');
+}
+
 export const LEAD_ID = 'intro';
 const LEAD_TITLE = 'Introduction';
 const MAX_SLUG = 60;

@@ -3,15 +3,20 @@
 	import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 	import { doc, onSnapshot } from 'firebase/firestore';
 	import { afterNavigate, goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import { routeOf } from '$lib/config/navigation';
 	import { auth, db } from '$lib/firebase';
 	import { callAction } from '$lib/actions';
-	import { FOCUSABLE, trapTab } from '$lib/utils';
+	import { FOCUSABLE, trapTab, canOpen } from '$lib/utils';
 	import { me, pageTitle, type Me } from '$lib/stores';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import Header from '$lib/components/Header.svelte';
 	import Logo from '$lib/components/Logo.svelte';
 
 	let { children } = $props();
+	// A page the person has no permission for isn't rendered at all (an address typed by hand),
+	// so it never starts its listeners or calls. Reads $me to follow a change of permissions.
+	let allowed = $derived(!!$me && canOpen(routeOf(page.url.pathname)));
 	let checking = $state(true);
 	/** Signed in but not approved yet: waiting for an admin, watching their own profile. */
 	let waiting = $state<{ email: string } | null>(null);
@@ -169,7 +174,21 @@
 		<div class="flex min-w-0 flex-1 flex-col">
 			<Header onmenu={openNav} menuOpen={navOpen} />
 			<main class="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-6">
-				{@render children?.()}
+				{#if allowed}
+					{@render children?.()}
+				{:else}
+					<div class="mx-auto mt-10 max-w-md card px-6 py-10 text-center">
+						<p class="font-semibold">You don't have access to this page</p>
+						<p class="mt-1 text-sm text-ink-soft">
+							An admin can give it to you in Admin → Groups. <a
+								href="/"
+								class="text-primary-700 hover:underline"
+							>
+								Go to Home
+							</a>
+						</p>
+					</div>
+				{/if}
 			</main>
 		</div>
 	</div>

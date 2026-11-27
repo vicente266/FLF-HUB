@@ -1,4 +1,4 @@
-import { fold, splitSections } from './sections';
+import { fold, splitSections, titleOf } from './sections';
 
 /**
  * Knowledge search (docs/knowledge.md, "Search"): in memory over the settings-sized list, no
@@ -158,7 +158,7 @@ export function searchEntries(entries: SearchEntry[], query: string, limit = 5):
 				id: e.id,
 				section: s.id,
 				sectionTitle: s.title,
-				title: e.label || '(untitled)',
+				title: titleOf(e),
 				type: e.type ?? 'other',
 				rank: e.rank,
 				status: e.status ?? 'draft',

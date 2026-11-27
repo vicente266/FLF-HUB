@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { collection, query, orderBy, limit } from 'firebase/firestore';
 	import { db } from '$lib/firebase';
-	import { listen, setTitle, formatDate, toDate } from '$lib/utils';
+	import { hasPermission, listen, setTitle, formatDate, toDate } from '$lib/utils';
 	import type { CalendarEvent } from '$lib/types/crm';
 	import Empty from '$lib/components/shared/Empty.svelte';
 	import UpcomingMeetings from '$lib/components/events/UpcomingMeetings.svelte';
 
+	const canSync = hasPermission('connections.any.write');
 	setTitle('Events', 'Upcoming meetings from the calendars, and past ones (via the portal sheet)');
 
 	let events = $state<CalendarEvent[]>([]);
@@ -63,10 +64,14 @@
 		<p class="text-sm text-ink-soft">Loading…</p>
 	{:else if events.length === 0}
 		<Empty title="No meetings yet">
-			Meetings with contacts come in from the team's calendars when the Portal is synced. To bring
-			them in now, open <a href="/connections" class="text-primary-700 hover:underline">
-				Connections
-			</a> and choose Sync now on the FLF Portal sheet.
+			Meetings with contacts come in from the team's calendars when the Portal is synced, every
+			night.
+			{#if canSync}To bring them in now, open <a
+					href="/connections?open=portal-sheet"
+					class="text-primary-700 hover:underline"
+				>
+					Connections
+				</a> and choose Sync now on the FLF Portal sheet.{/if}
 		</Empty>
 	{:else if filtered.length === 0}
 		<Empty title="No match">No meeting has that title or person.</Empty>

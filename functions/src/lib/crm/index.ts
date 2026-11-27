@@ -87,6 +87,8 @@ export interface LastMove {
 	prevChangedByName: string | null;
 	prevLastActivityAt: FirebaseFirestore.Timestamp | null;
 	prevNeedsAttention: boolean;
+	/** The next step before a move to a final stage cleared it (absent on other moves). */
+	prevNextStep?: string;
 	/** Its timeline entry: while it is the latest, Undo also puts the last activity back. */
 	activityId: string;
 	at: FirebaseFirestore.Timestamp;
@@ -97,7 +99,8 @@ export interface LastMove {
 export const currentMove = (c: Contact | undefined) =>
 	c?.lastMove && c.lastMove.to === c.stage ? c.lastMove.id : undefined;
 
-export type ActivityKind = 'created' | 'note' | 'stage' | 'assigned' | 'automation' | 'updated';
+export type ActivityKind =
+	'created' | 'note' | 'stage' | 'assigned' | 'automation' | 'updated' | 'task';
 
 /** Who did it, as the timeline shows it; marked "via Claude" when the connector made the call. */
 const who = (auth: any) => {
@@ -270,9 +273,14 @@ async function checkStrategy(id: string | undefined) {
 		throw new HttpsError('not-found', 'Strategy not found.');
 }
 
-/** How a contact is named in tasks and messages: a Partner without a main contact by its organisation. */
-export const displayName = (c: { name?: string; company?: string }) =>
-	c.name || c.company || 'Unnamed';
+/**
+ * How a contact is named in tasks, meetings and automation results: a Partner by its organisation,
+ * with the main contact in brackets when there is one; everyone else by name.
+ */
+export function displayName(c: { type?: string; name?: string; company?: string }): string {
+	if (c.type === 'partner' && c.company) return c.name ? `${c.company} (${c.name})` : c.company;
+	return c.name || c.company || 'Unnamed';
+}
 
 /**
  * Fields an editor may set on create or update. A name is required, except for a Partner, which
@@ -312,7 +320,7 @@ const ASSIGN_MAX = 100;
 
 /**
  * `contact.assign` for many contacts: owner fields, automation tasks handed over, a timeline entry
- * "Assigned to X" (which is activity, so their check-in tasks close). Contacts that already have
+ * "Assigned to X" (not activity: "no activity for N days" keeps counting). Contacts that already have
  * that owner are left alone. Reads: the contacts, the owner, and one task query per 30 contacts.
  * Returns the counts and each changed contact's previous owner, for Undo.
  */
@@ -432,7 +440,7 @@ export async function create(p: any, by: string, uid: string): Promise<string> {
 	});
 	await ref.collection('activity').add({
 		kind: 'created',
-		text: `Created from ${source}`,
+		text: `Created from ${source[0].toUpperCase()}${source.slice(1)}`,
 		by,
 		at: serverTimestamp()
 	});
@@ -507,6 +515,7 @@ export const actions = {
 			prevChangedByName: c.changedByName ?? null,
 			prevLastActivityAt: c.lastActivityAt ?? null,
 			prevNeedsAttention: c.needsAttention ?? false,
+			...(stage.final ? { prevNextStep: c.nextStep ?? '' } : {}),
 			activityId: activity.id,
 			at: serverTimestamp(),
 			by: auth?.uid ?? null
@@ -524,6 +533,8 @@ export const actions = {
 			changedByName: by,
 			// The reason belongs to a losing stage; leaving it clears it.
 			lostReason: stage.askReason ? reason : '',
+			// A final stage ends the next-step chase (its task closes in onStageChanged).
+			...(stage.final ? { nextStep: '' } : {}),
 			lastMove
 		});
 		batch.set(
@@ -572,6 +583,7 @@ export const actions = {
 				open: m.prevOpen,
 				stageChangedAt: m.prevStageChangedAt,
 				lostReason: m.prevLostReason ?? deleteField(),
+				...(m.prevNextStep !== undefined ? { nextStep: m.prevNextStep } : {}),
 				changedByUid: m.prevChangedByUid,
 				changedByName: m.prevChangedByName,
 				updatedAt: serverTimestamp(),
@@ -791,7 +803,7 @@ export const actions = {
 		});
 		// Tasks imported from the portal sheet belong to no contact.
 		if (done && t.data()?.contactId) {
-			await logActivity(t.data()?.contactId, 'note', `Task done: ${t.data()?.title}`, who(auth));
+			await logActivity(t.data()?.contactId, 'task', `Task done: ${t.data()?.title}`, who(auth));
 		}
 		return { ok: true };
 	}

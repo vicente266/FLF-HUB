@@ -8,6 +8,8 @@ node_modules
 .env
 .env.*
 !.env.example
+# Non-secret settings of the live functions (the connector's address); secrets are in Secret Manager.
+!functions/.env.flfhub
 *.log
 *.tsbuildinfo
 vite.config.ts.timestamp-*

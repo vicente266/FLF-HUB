@@ -1,16 +1,13 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { me } from '$lib/stores';
-	import { hasPermission } from '$lib/utils';
+	import { canOpen } from '$lib/utils';
 	import { NAVIGATION, type NavItem } from '$lib/config/navigation';
 	import { navCount } from '$lib/helpers/navCounts.svelte';
 	import Logo from './Logo.svelte';
 
-	const visible = (item: NavItem) => {
-		if (!$me) return false;
-		if (item.adminOnly) return $me.role === 'admin';
-		return !item.permission || hasPermission(item.permission);
-	};
+	// Reads $me so the list follows a change of permissions.
+	const visible = (item: NavItem) => !!$me && canOpen(item);
 
 	const active = (href: string) =>
 		href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);

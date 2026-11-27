@@ -65,9 +65,10 @@ call `audit`; writes call the feature's action through `act()`.
 ## Setup
 
 1. `openssl rand -base64 48 | firebase functions:secrets:set FLF_MCP_KEY --data-file=-`
-2. Deploy. Put `https://<claudeMcp host>/mcp` in `functions/.env` as `FLF_CONNECTOR_URL`, and the
-   Hub's own address as `FLF_HUB_URL` if it is not `https://hub.foundersforlifefellowship.com`.
-   Deploy again.
+2. Deploy. Put `https://<claudeMcp host>/mcp` in `functions/.env.flfhub` (committed: not a
+   secret) as `FLF_CONNECTOR_URL`, and the Hub's own address as `FLF_HUB_URL` if it is not
+   `https://hub.foundersforlifefellowship.com`. Deploy again. Live:
+   `https://claudemcp-900685987021.europe-west4.run.app/mcp`.
 3. Admin → Groups: give `Claude — connect` to the groups that may use it.
 4. Connections → Claude connector → Test.
 

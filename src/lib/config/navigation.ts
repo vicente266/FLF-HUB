@@ -30,6 +30,21 @@ export interface NavSection {
 	items: NavItem[];
 }
 
+/** Old addresses that are not in the sidebar, with the permission they need. */
+const OTHER_ROUTES: Pick<NavItem, 'href' | 'permission' | 'adminOnly'>[] = [
+	{ href: '/skills', permission: 'skills.any.read' },
+	{ href: '/admin', adminOnly: true }
+];
+
+/** The sidebar item (or other route) an address belongs to: the longest matching prefix. */
+export function routeOf(path: string): Pick<NavItem, 'href' | 'permission' | 'adminOnly'> | null {
+	const all = [...NAVIGATION.flatMap((s) => s.items), ...OTHER_ROUTES];
+	const matches = all.filter((i) =>
+		i.href === '/' ? path === '/' : path === i.href || path.startsWith(`${i.href}/`)
+	);
+	return matches.sort((a, b) => b.href.length - a.href.length)[0] ?? null;
+}
+
 export const NAVIGATION: NavSection[] = [
 	{
 		label: 'Work',
@@ -57,7 +72,8 @@ export const NAVIGATION: NavSection[] = [
 				href: '/knowledge',
 				label: 'Knowledge',
 				icon: BookOpen,
-				permission: 'knowledge.any.read'
+				// Skills is a tab of Knowledge: people who can only see skills land on it.
+				permission: 'knowledge.any.read | skills.any.read'
 			}
 		]
 	},

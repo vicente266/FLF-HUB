@@ -51,7 +51,7 @@ export const MCP_SERVER_NAME = 'FLF Hub';
 /**
  * The connector's address, for the Hub's Claude page: what people paste into claude.ai (Add custom
  * connector) or Claude Code. The `claudeMcp` function gets its own Cloud Run host at the first
- * deploy; put it in `functions/.env` as FLF_CONNECTOR_URL (`https://<host>/mcp`). The server itself
+ * deploy; put it in `functions/.env.flfhub` (committed) as FLF_CONNECTOR_URL (`https://<host>/mcp`). The server itself
  * answers on whatever host it is reached at.
  */
 export const CONNECTOR_URL = process.env.FLF_CONNECTOR_URL ?? '';

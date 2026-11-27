@@ -115,7 +115,7 @@
 
 	const HEALTH_TEXT = {
 		ok: 'All systems working',
-		warning: 'Working, some connections need setup',
+		warning: 'Working, some things need attention',
 		error: 'Something is failing',
 		off: 'Nothing switched on'
 	};
@@ -132,7 +132,7 @@
 	{#if summary}
 		{@const k = summary.kpis}
 		<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-			{#each [{ label: 'My open tasks', value: k.openTasks, href: '/tasks?scope=mine', tone: '' }, { label: 'My overdue tasks', value: k.overdueTasks, href: '/tasks?scope=mine#overdue', tone: k.overdueTasks ? 'text-danger' : '' }, { label: 'My contacts needing attention', value: k.attentionMine, href: '/crm?type=all&attention=1&owner=me', tone: k.attentionMine ? 'text-warning' : '' }, { label: 'New contacts (30 days, team)', value: k.newLast30, href: '/crm?type=all&since=30', tone: '' }] as { label, value, href, tone } (label)}
+			{#each [{ label: 'My open tasks', value: k.openTasks, href: '/tasks?scope=mine', tone: '' }, { label: 'My overdue tasks', value: k.overdueTasks, href: '/tasks?scope=mine#overdue', tone: k.overdueTasks ? 'text-danger' : '' }, { label: 'My contacts needing attention', value: k.attentionMine, href: '/crm?type=all&attention=1&owner=me', tone: k.attentionMine ? 'text-warning' : '' }, { label: 'New contacts (30 days, team)', value: k.newLast30, href: '/crm?type=all&since=30&lost=1', tone: '' }] as { label, value, href, tone } (label)}
 				<a {href} class="block card px-4 py-3 hover:border-primary-300">
 					<div class="text-xs font-semibold text-ink-soft">{label}</div>
 					<div class="mt-1 text-2xl font-bold {tone}">{value}</div>

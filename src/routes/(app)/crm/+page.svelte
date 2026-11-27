@@ -208,10 +208,10 @@
 	// Losing columns show only with "Show lost".
 	let columns = $derived(stages.filter((s) => showLost || !s.askReason));
 
-	// Losing columns (Lost, Declined) start folded, so the working stages fit the screen.
+	// Losing columns (Lost, Declined) show open once "Show lost" is ticked, and can be folded away.
 	let expanded = $state<Record<string, boolean>>({});
 	const folded = (s: { id: string; askReason?: boolean }) =>
-		!!s.askReason && !expanded[`${type}:${s.id}`];
+		!!s.askReason && expanded[`${type}:${s.id}`] === false;
 
 	/** Card date colour for an open contact: warning after 30 days without activity, danger after 90. */
 	function ageTone(c: Contact) {

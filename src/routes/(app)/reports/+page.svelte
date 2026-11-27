@@ -70,7 +70,7 @@
 			<RefreshCw class="h-4 w-4 {loading ? 'animate-spin' : ''}" /> Refresh
 		</button>
 	</div>
-	<FormError message={error} />
+	<FormError message={error ?? cfg.error} />
 
 	{#if summary && cfg.value}
 		{@const s = summary}

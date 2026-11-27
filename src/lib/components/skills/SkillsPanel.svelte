@@ -86,7 +86,7 @@
 	const reportLine = (name: string, r: SkillSourceReport) =>
 		r.configured
 			? `${name}: ${r.files} files, ${r.added} new, ${r.updated} updated, ${r.removed} removed`
-			: `${name}: not set up`;
+			: (r.skipped[0] ?? `${name}: not set up`);
 	async function sync() {
 		syncing = true;
 		error = null;
@@ -219,7 +219,8 @@
 			{#each lastSync as [name, r] (name)}
 				<span>
 					{reportLine(name, r)} · {formatDateTime(r.at)}
-					{#if r.skipped.length}
+					<!-- A source not set up says so in its line: nothing failed to be read. -->
+					{#if r.configured && r.skipped.length}
 						<details class="inline">
 							<summary class="font-semibold text-warning">
 								{r.skipped.length} not read

@@ -174,13 +174,26 @@ async function checkNames(keys: string[]): Promise<void> {
 }
 
 /** A file's skill fields, audited. `fallback` names it when it names itself nowhere. */
+const TV_BUILD = 2;
+
+/** What each FLF TV skill is for: its text is the prompt itself, with no front matter. */
+const TV_DESCRIPTION: Record<(typeof TV_SKILL_IDS)[number], string> = {
+	clipping:
+		'Use when FLF TV cuts a recorded video into short clips: which moments to pick, how long, and the caption and hashtags of each.',
+	brand:
+		'Use when FLF TV renders the clips: colours, caption size, hook, end card, and the Drive folder the clips go to.'
+};
+
 function build(
 	text: string,
 	fallback: string,
 	updatedAt: Date | null,
-	links?: { links: string[]; repoPaths: ReadonlySet<string> }
+	links?: { links: string[]; repoPaths: ReadonlySet<string> },
+	/** Used when the text has none of its own (the FLF TV skills are plain prompts). */
+	fallbackDescription = ''
 ) {
-	const d = describe(text);
+	const found = describe(text);
+	const d = found.description.trim() ? found : { ...found, description: fallbackDescription };
 	const name = (d.name || fallback).slice(0, MAX_NAME);
 	return {
 		name,
@@ -220,11 +233,18 @@ async function mirrorTv(stored: Map<string, Row>): Promise<string[]> {
 	const touched: string[] = [];
 	for (const id of TV_SKILL_IDS) {
 		const s = await tv.skillOf(id);
-		const tvKey = `${s.version}:${s.isDefault}`;
+		// `TV_BUILD` changes when how a TV skill is listed changes, so every one is listed again.
+		const tvKey = `${s.version}:${s.isDefault}:${TV_BUILD}`;
 		const docId = `tv-${id}`;
 		if (stored.get(docId)?.tvKey === tvKey) continue;
 		const fallback = id === 'clipping' ? 'FLF TV clipping' : 'FLF TV brand';
-		const fields = build(s.text, fallback, s.updatedAt ? new Date(s.updatedAt) : null);
+		const fields = build(
+			s.text,
+			fallback,
+			s.updatedAt ? new Date(s.updatedAt) : null,
+			undefined,
+			TV_DESCRIPTION[id]
+		);
 		touched.push(nameKey(stored.get(docId)?.name ?? ''), fields.nameKey);
 		await collection.doc(docId).set({
 			...fields,

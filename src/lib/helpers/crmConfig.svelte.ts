@@ -5,14 +5,29 @@ import type { CrmConfig, ContactType } from '$lib/types/crm';
 /** The CRM config, fetched once per session from `crm:config.get`. */
 let config = $state<CrmConfig | null>(null);
 let loading: Promise<CrmConfig> | null = null;
+/** Why the last fetch failed (no CRM access, offline); cleared by the next try. */
+let failed = $state<string | null>(null);
 
 export function crmConfig() {
 	if (!config && !loading) {
-		loading = callAction<CrmConfig>('crm:config.get').then((c) => (config = c));
+		failed = null;
+		loading = callAction<CrmConfig>('crm:config.get')
+			.then((c) => (config = c))
+			.catch((e) => {
+				// Not cached: the next screen that needs it asks again.
+				loading = null;
+				failed = errorText(e);
+				throw e;
+			});
+		// Callers read `value`; a failure must not surface as an unhandled rejection here.
+		loading.catch(() => {});
 	}
 	return {
 		get value() {
 			return config;
+		},
+		get error() {
+			return failed;
 		}
 	};
 }

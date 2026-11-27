@@ -325,7 +325,8 @@ export function recompute(skills: Listed[], now = new Date()): Map<string, Issue
 			next.push({
 				level: 'warning',
 				code: 'duplicate',
-				message: `Another skill has the same name: ${others.map((o) => o.location).join('; ')}. Claude can't tell them apart.`
+				// A Hub skill's location is just "Hub": say what it is instead.
+				message: `Same name as ${others.map((o) => (o.location === 'Hub' ? 'a skill written in the Hub' : o.location)).join('; ')}. Claude can't tell them apart.`
 			});
 		const stale = staleIssue(s.updatedAt, now);
 		if (stale) next.push(stale);

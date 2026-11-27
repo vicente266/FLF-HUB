@@ -360,7 +360,8 @@
 		assigned: 'Owner',
 		automation: 'Automation',
 		updated: 'Updated',
-		meeting: 'Meeting'
+		meeting: 'Meeting',
+		task: 'Task'
 	};
 </script>
 

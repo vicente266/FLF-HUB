@@ -32,9 +32,6 @@
 	}
 
 	onMount(() => {
-		if (new URLSearchParams(location.search).get('invalid') === '1') {
-			error = 'Your account is not approved yet. Ask an admin to give you access.';
-		}
 		return onAuthStateChanged(auth, (u) => {
 			if (u && !error) goto(target());
 		});
@@ -71,6 +68,8 @@
 	}
 
 	async function reset() {
+		error = null;
+		info = null;
 		if (!email.trim()) {
 			error = 'Type your email first.';
 			return;

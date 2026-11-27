@@ -17,8 +17,16 @@
 		open = $bindable(false),
 		config,
 		type,
-		strategyId = ''
-	}: { open: boolean; config: CrmConfig; type: ContactType; strategyId?: string } = $props();
+		strategyId = '',
+		segment = ''
+	}: {
+		open: boolean;
+		config: CrmConfig;
+		type: ContactType;
+		strategyId?: string;
+		/** A Partner added from a strategy starts with that strategy's segment. */
+		segment?: string;
+	} = $props();
 
 	const blank = (): ContactDraft => ({
 		type,
@@ -30,7 +38,7 @@
 		source: 'manual',
 		tags: '',
 		notes: '',
-		segment: '',
+		segment,
 		strategyId,
 		stage: config.pipelines[type]?.stages[0]?.id ?? '',
 		ownerUid: $me?.uid ?? ''

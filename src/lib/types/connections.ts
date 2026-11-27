@@ -71,6 +71,8 @@ export interface Health {
 		level: Level;
 		lastRunAt: number | null;
 		lastError: string | null;
+		/** On, scheduled, and hasn't run for 2 days. */
+		late: boolean;
 		runs: number;
 		errors: number;
 	}[];

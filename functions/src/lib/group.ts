@@ -1,3 +1,4 @@
+import { HttpsError } from 'firebase-functions/v2/https';
 import { db } from '../firestore';
 import { PERMISSIONS } from './permissions';
 
@@ -20,7 +21,7 @@ export async function save(
 	permissions: string[]
 ): Promise<string> {
 	const trimmed = name.trim();
-	if (!trimmed) throw new Error('A group needs a name.');
+	if (!trimmed) throw new HttpsError('invalid-argument', 'A group needs a name.');
 	const clean = [...new Set(permissions)].filter((p) =>
 		(PERMISSIONS as readonly string[]).includes(p)
 	);
@@ -29,14 +30,19 @@ export async function save(
 	// New users are put in the Default group by name, so it can't be renamed.
 	const current = id ? all.docs.find((d) => d.id === id) : undefined;
 	if (current?.data().name === DEFAULT_NAME && trimmed !== DEFAULT_NAME) {
-		throw new Error(
+		throw new HttpsError(
+			'failed-precondition',
 			`The ${DEFAULT_NAME} group can't be renamed: new users are added to it by name.`
 		);
 	}
 	const duplicate = all.docs.find(
 		(d) => String(d.data().name).toLowerCase() === trimmed.toLowerCase() && d.id !== id
 	);
-	if (duplicate) throw new Error(`A group named "${duplicate.data().name}" already exists.`);
+	if (duplicate)
+		throw new HttpsError(
+			'already-exists',
+			`A group named "${duplicate.data().name}" already exists.`
+		);
 
 	const data = { name: trimmed, description: description.trim(), permissions: clean };
 	if (id) {
@@ -49,7 +55,8 @@ export async function save(
 /** Delete a group and remove it from every user in it. The Default group cannot be deleted. */
 export async function remove(id: string): Promise<void> {
 	const doc = await collection.doc(id).get();
-	if (doc.data()?.name === DEFAULT_NAME) throw new Error('The Default group cannot be deleted.');
+	if (doc.data()?.name === DEFAULT_NAME)
+		throw new HttpsError('failed-precondition', 'The Default group cannot be deleted.');
 	await collection.doc(id).delete();
 	const users = await db.collection('user').where('groups', 'array-contains', id).get();
 	const batch = db.batch();

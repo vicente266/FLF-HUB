@@ -23,22 +23,26 @@
 	let busy = $state<string | null>(null);
 	let error = $state<string | null>(null);
 	let drafts = $state<Record<string, Record<string, string>>>({});
+	/** The saved settings arrive with the first snapshot: a form filled before it would be empty. */
+	let statesLoaded = $state(false);
 
 	onMount(() => {
 		callAction<{ connectors: Connector[]; categories: Record<Category, string> }>(
 			'connections:config.get'
-		).then(async (r) => {
-			connectors = r.connectors;
-			categories = r.categories;
-			// /connections?open=<id> (from Health, Automations) opens that row.
-			const id = page.url.searchParams.get('open');
-			const c = connectors.find((x) => x.id === id);
-			if (c) {
-				toggle(c);
-				await tick();
-				document.getElementById(`conn-${c.id}`)?.scrollIntoView({ block: 'start' });
-			}
-		});
+		)
+			.then(async (r) => {
+				connectors = r.connectors;
+				categories = r.categories;
+				// /connections?open=<id> (from Health, Automations) opens that row.
+				const id = page.url.searchParams.get('open');
+				const c = connectors.find((x) => x.id === id);
+				if (c) {
+					toggle(c);
+					await tick();
+					document.getElementById(`conn-${c.id}`)?.scrollIntoView({ block: 'start' });
+				}
+			})
+			.catch((e) => (error = errorText(e)));
 		// Stage names for the import preview (portal contacts are Fellows).
 		if (hasPermission('crm.any.read'))
 			callAction<{ pipelines: Record<string, { stages: { id: string; label: string }[] }> }>(
@@ -53,6 +57,7 @@
 				.catch(() => {});
 		return listen<ConnectionState>(collection(db, 'connection'), (rows) => {
 			states = Object.fromEntries(rows.map((r) => [r.id, r]));
+			statesLoaded = true;
 		});
 	});
 
@@ -78,8 +83,12 @@
 
 	function toggle(c: Connector) {
 		open = open === c.id ? null : c.id;
-		drafts[c.id] ??= { ...(states[c.id]?.settings ?? {}) };
 	}
+	// The open card's form starts from the saved settings once they have loaded (kept after that,
+	// so edits survive closing and reopening).
+	$effect(() => {
+		if (open && statesLoaded && !drafts[open]) drafts[open] = { ...(states[open]?.settings ?? {}) };
+	});
 
 	async function run(label: string, fn: () => Promise<unknown>) {
 		busy = label;
@@ -207,6 +216,15 @@
 	let working = $derived(live.filter((c) => statusOf(c) === 'ok').length);
 </script>
 
+<!-- Setup steps and setting help: **bold** and `code` as the config writes them. -->
+{#snippet richText(text: string)}{#each rich(text) as part, j (j)}{#if part.kind === 'bold'}<strong
+				class="text-ink"
+			>
+				{part.text}
+			</strong>{:else if part.kind === 'code'}<code class="rounded bg-canvas px-1 text-xs">
+				{part.text}
+			</code>{:else}{part.text}{/if}{/each}{/snippet}
+
 <div class="mx-auto max-w-5xl space-y-5">
 	<div class="flex items-center justify-between card px-5 py-4">
 		<div>
@@ -242,9 +260,14 @@
 							/>
 							<div class="min-w-0 flex-1">
 								<div class="font-semibold">{c.name}</div>
-								<div class="truncate text-xs text-ink-soft">{c.description}</div>
+								<div class="truncate text-xs text-ink-soft" title={c.description}>
+									{c.description}
+								</div>
 							</div>
-							<div class="w-40 shrink-0 truncate text-xs text-ink-soft">
+							<div
+								class="w-40 shrink-0 truncate text-xs text-ink-soft"
+								title="Feeds {c.feeds.join(', ')}"
+							>
 								Feeds {c.feeds.join(', ')}
 							</div>
 							<div class="w-28 shrink-0">
@@ -254,21 +277,14 @@
 
 						{#if open === c.id}
 							<div class="grid grid-cols-2 gap-6 border-t border-line/60 px-4 py-4 text-sm">
+								<p class="col-span-2 text-ink-soft">
+									{c.description} <span class="whitespace-nowrap">Feeds {c.feeds.join(', ')}.</span>
+								</p>
 								<div class="space-y-3">
 									<div>
 										<div class="label">How to set it up</div>
 										<ol class="list-decimal space-y-1 pl-4 text-ink-soft">
-											{#each c.setup as step, i (i)}<li>
-													{#each rich(step) as part, j (j)}{#if part.kind === 'bold'}<strong
-																class="text-ink"
-															>
-																{part.text}
-															</strong>{:else if part.kind === 'code'}<code
-																class="rounded bg-canvas px-1 text-xs"
-															>
-																{part.text}
-															</code>{:else}{part.text}{/if}{/each}
-												</li>{/each}
+											{#each c.setup as step, i (i)}<li>{@render richText(step)}</li>{/each}
 										</ol>
 									</div>
 									{#if c.secrets.length}
@@ -288,7 +304,9 @@
 								</div>
 
 								<div class="space-y-3">
-									{#if c.settings.length}
+									{#if c.settings.length && !drafts[c.id]}
+										<p class="text-xs text-ink-soft">Loading the saved settings…</p>
+									{:else if c.settings.length}
 										{#each c.settings as f (f.key)}
 											<div>
 												<label class="label" for="{c.id}-{f.key}">{f.label}</label>
@@ -307,7 +325,7 @@
 														bind:value={drafts[c.id][f.key]}
 													/>
 												{/if}
-												<p class="mt-0.5 text-xs text-ink-soft">{f.help}</p>
+												<p class="mt-0.5 text-xs text-ink-soft">{@render richText(f.help)}</p>
 											</div>
 										{/each}
 									{/if}

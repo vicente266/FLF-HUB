@@ -4,7 +4,7 @@
 	import Video from '@lucide/svelte/icons/video';
 	import MapPin from '@lucide/svelte/icons/map-pin';
 	import { callAction, errorText } from '$lib/actions';
-	import { formatDay, formatTime } from '$lib/utils';
+	import { formatDay, formatTime, hasPermission } from '$lib/utils';
 	import type { Upcoming, UpcomingMeeting } from '$lib/types/calendar';
 	import FormError from '$lib/components/shared/FormError.svelte';
 
@@ -70,10 +70,14 @@
 		{:else if data && !data.configured}
 			<p class="text-sm text-ink-soft">
 				No calendar is connected yet.
-				<a href="/connections?open=calendar" class="font-semibold text-primary-700 hover:underline">
-					Connect a calendar in Connections → Calendar
-				</a>
-				to see the next {data.days} days of meetings here.
+				{#if hasPermission('connections.any.write')}<a
+						href="/connections?open=calendar"
+						class="font-semibold text-primary-700 hover:underline"
+					>
+						Connect a calendar in Connections → Calendar
+					</a>
+					to see the next {data.days} days of meetings here.{:else}An admin can connect one to show
+					the next {data.days} days of meetings here.{/if}
 			</p>
 		{:else if data}
 			{#each data.errors as e (e.calendarId)}

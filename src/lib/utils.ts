@@ -25,6 +25,15 @@ export function hasPermission(expr: string): boolean {
 	return has(expr);
 }
 
+/** Whether the signed-in person may open a route or sidebar item (admins: every one). */
+export function canOpen(item: { permission?: string; adminOnly?: boolean } | null): boolean {
+	const user = get(me);
+	if (!user) return false;
+	if (!item) return true;
+	if (item.adminOnly) return user.role === 'admin';
+	return !item.permission || hasPermission(item.permission);
+}
+
 export function setTitle(title: string, subtitle?: string) {
 	pageTitle.set({ title, subtitle });
 }

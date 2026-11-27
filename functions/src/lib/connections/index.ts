@@ -115,7 +115,13 @@ export async function n8nWorkflows(apiKey: string | undefined): Promise<N8nWorkf
 			const res = await get(
 				`${base}/api/v1/${path}${sep}limit=${Math.min(250, max - out.length)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
 				headers
-			);
+			).catch(() => {
+				// Network failure or timeout: a plain sentence, not fetch's own message.
+				throw new HttpsError(
+					'unavailable',
+					'Can’t reach n8n right now. Try again in a few minutes.'
+				);
+			});
 			if (!res.ok)
 				throw new HttpsError(
 					'unavailable',
@@ -215,15 +221,18 @@ async function check(id: string, secrets: Secrets): Promise<CheckResult> {
 				const tabs = await portal.readAll();
 				const drift = Object.entries(tabs)
 					.filter(([, t]) => t.missing.length)
-					.map(([k, t]) => `${k}: missing ${t.missing.join(', ')}`);
+					// No rows at all: the tab is gone or empty, not columns renamed.
+					.map(([k, t]) =>
+						t.rows.length ? `${k}: missing ${t.missing.join(', ')}` : `${k}: tab missing or empty`
+					);
 				const rows = Object.entries(tabs)
 					.map(([k, t]) => `${k} ${t.rows.length}`)
 					.join(' · ');
 				if (drift.length)
 					return {
 						status: 'error',
-						detail: `The sheet's columns changed: ${drift.join('; ')}`,
-						hint: 'Columns the import needs are missing from the portal sheet. Put them back with the same names, or ask a developer to update the import.'
+						detail: `The sheet doesn't match the import: ${drift.join('; ')}`,
+						hint: 'Tabs or columns the import needs are missing from the portal sheet. Put them back with the same names, or ask a developer to update the import.'
 					};
 				// Rows and contacts differ on purpose (team rows, merges): say how, so no one hunts a lost row.
 				const p = portal.plan(tabs, []);

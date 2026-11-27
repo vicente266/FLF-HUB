@@ -158,7 +158,11 @@
 		<FormError message={error} />
 	</div>
 	{#snippet footer()}
-		{#if draft.id}<button class="mr-auto btn-ghost text-danger" onclick={remove}>
+		<!-- The Default group can't be deleted (new users join it by name). -->
+		{#if draft.id && groups.find((g) => g.id === draft.id)?.name !== 'Default'}<button
+				class="mr-auto btn-ghost text-danger"
+				onclick={remove}
+			>
 				Delete
 			</button>{/if}
 		<button class="btn-ghost" onclick={() => (editing = false)}>Cancel</button>

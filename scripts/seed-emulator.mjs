@@ -8,7 +8,8 @@ const admin = require('firebase-admin');
 
 process.env.FIRESTORE_EMULATOR_HOST ??= 'localhost:8081';
 process.env.FIREBASE_AUTH_EMULATOR_HOST ??= 'localhost:9099';
-admin.initializeApp({ projectId: 'flf-hub' });
+// The project the emulators run as (`npm run emulators:start` uses demo-flf-hub).
+admin.initializeApp({ projectId: process.env.GCLOUD_PROJECT ?? 'demo-flf-hub' });
 const db = admin.firestore();
 const auth = admin.auth();
 const DAY = 86_400_000;

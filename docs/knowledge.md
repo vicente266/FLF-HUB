@@ -9,8 +9,8 @@ for funds and universities, messaging. Ported from the EBS Hub's knowledge store
 - One `knowledge/{id}` document per entry: `label` (optional), `description` (the text, verbatim),
   `expiredAt` (`YYYY-MM-DD`, optional), `createdAt`, `updatedAt`, `updatedBy`, and its outline
   `sections` and length `words` (see "Sections").
-- An entry is **active** until its `expiredAt` day has passed. Expired entries stay in the list (struck
-  through, folded away) so they can be re-dated or deleted, but are never given to Claude.
+- An entry is **active** until its `expiredAt` day has passed. Expired entries stay in the list (dimmed,
+  marked "expired <date>", hidden until Show expired) so they can be re-dated or deleted, but are never given to Claude.
 - Settings-sized (at most 200 entries, 8,000 characters for an entry written in the Hub, 50,000 for an imported document): read whole and filtered in memory,
   fresh on every use, so an expiry takes effect the day it passes.
 

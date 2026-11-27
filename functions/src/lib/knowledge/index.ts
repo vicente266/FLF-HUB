@@ -4,7 +4,7 @@ import { GoogleAuth } from 'google-auth-library';
 import { db } from '../../firestore';
 import { callVia } from '../call-context';
 import { createLogger, increment, serverTimestamp, str } from '../utils';
-import { fold, sectionText, sectionsOf, wordCount, type Section } from './sections';
+import { fold, sectionText, sectionsOf, titleOf, wordCount, type Section } from './sections';
 import { searchEntries, MAX_RESULTS } from './search';
 import {
 	DEFAULT_FOLDER_ID,
@@ -206,7 +206,7 @@ export function relevantIndex(entries: Entry[]) {
 		const outline = outlineOf(e);
 		return {
 			id: e.id,
-			title: e.label || '(untitled)',
+			title: titleOf(e),
 			type: typeOf(e),
 			rank: rankOf(e),
 			status: statusOf(e),
@@ -348,13 +348,13 @@ function cleanCard(p: any, prev: Knowledge | undefined, auth: any, use: Use) {
 	if (!(REVIEW_EVERY as readonly number[]).includes(reviewEvery))
 		throw new HttpsError('invalid-argument', `Review every ${REVIEW_EVERY.join(', ')} months.`);
 	let status2 = status;
-	// Making an approved entry shareable outside FLF takes a person's approval again.
+	// Making an approved entry shareable outside FLF takes a person's approval again, as its own
+	// step (Approve on the list): the edit form always sends the status it shows.
 	if (
 		status === 'approved' &&
 		prev?.status === 'approved' &&
 		audience === 'external' &&
-		(prev.audience ?? 'internal') !== 'external' &&
-		p?.status !== 'approved'
+		(prev.audience ?? 'internal') !== 'external'
 	)
 		status2 = 'draft';
 	const approving = status2 === 'approved' && prev?.status !== 'approved';

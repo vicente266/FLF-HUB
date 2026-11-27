@@ -42,10 +42,15 @@ Node 24 (`.nvmrc`), Java 21 for the emulators, `npm i -g firebase-tools`.
 ```sh
 npm install && (cd functions && npm install)
 printf 'N8N_API_KEY=\nCHECKLY_API_KEY=\nFLF_MCP_KEY=%s\n' "$(openssl rand -base64 48)" > functions/.secret.local
-printf 'FLF_HUB_URL=http://localhost:5002\n' > functions/.env.local
-npm run emulators:start            # auth, functions, firestore (+ app on :5002)
+printf 'FLF_HUB_URL=http://localhost:5002\nFLF_CONNECTOR_URL=http://127.0.0.1:5001/demo-flf-hub/europe-west4/claudeMcp/mcp\n' > functions/.env.local
+cp .env.example .env.local         # then fill it as below
+npm run emulators:start            # auth, functions, firestore, as the demo-flf-hub project
 node scripts/seed-emulator.mjs     # admin + sample data
+npm run emulate                    # the app on :5002
 ```
+
+`.env.local` for the app: `VITE_FIREBASE_PROJECT_ID=demo-flf-hub`, any non-empty value for the
+other `VITE_FIREBASE_*`, and the emulator lines from `.env.example` uncommented.
 
 Sign in at http://localhost:5002 as `admin@foundersforlifefellowship.com` / `flf-local-123`.
 

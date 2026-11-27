@@ -23,7 +23,7 @@
 		KnowledgeUseOption
 	} from '$lib/types/knowledge';
 	import { isExpired } from '$lib/components/knowledge/expiry';
-	import { wordsOf } from '$lib/components/knowledge/words';
+	import { wordsOf, titleOf, plainLine } from '$lib/components/knowledge/words';
 	import KnowledgeModal from '$lib/components/knowledge/KnowledgeModal.svelte';
 	import GapsPanel from '$lib/components/knowledge/GapsPanel.svelte';
 	import Modal from '$lib/components/shared/Modal.svelte';
@@ -34,17 +34,19 @@
 
 	// Tabs: the knowledge entries, the skills and the gaps; the tab is kept in the address (?tab=gaps).
 	type Tab = 'knowledge' | 'skills' | 'gaps';
+	// Knowledge and Gaps need knowledge.any.read, Skills skills.any.read; the page opens with either.
+	const canKnowledge = hasPermission('knowledge.any.read');
 	const canSkills = hasPermission('skills.any.read');
 	let tab = $derived.by((): Tab => {
 		const t = page.url.searchParams.get('tab');
-		if (t === 'skills' && canSkills) return 'skills';
+		if (!canKnowledge || (t === 'skills' && canSkills)) return 'skills';
 		if (t === 'gaps') return 'gaps';
 		return 'knowledge';
 	});
 	const tabs: [Tab, string][] = [
-		['knowledge', 'Knowledge'],
+		...(canKnowledge ? [['knowledge', 'Knowledge'] as [Tab, string]] : []),
 		...(canSkills ? [['skills', 'Skills'] as [Tab, string]] : []),
-		['gaps', 'Gaps']
+		...(canKnowledge ? [['gaps', 'Gaps'] as [Tab, string]] : [])
 	];
 	function openTab(t: Tab) {
 		const url = new URL(page.url);
@@ -56,8 +58,9 @@
 	// Open gaps, newest first: the Gaps tab and its badge. One bounded listener.
 	const GAP_LIMIT = 100;
 	let gaps = $state<KnowledgeGap[]>([]);
-	$effect(() =>
-		listen<KnowledgeGap>(
+	$effect(() => {
+		if (!canKnowledge) return;
+		return listen<KnowledgeGap>(
 			query(
 				collection(db, 'knowledgeGap'),
 				where('status', '==', 'open'),
@@ -65,8 +68,8 @@
 				limit(GAP_LIMIT)
 			),
 			(rows) => (gaps = rows)
-		)
-	);
+		);
+	});
 
 	const canWrite = hasPermission('knowledge.any.write');
 	let entries = $state<KnowledgeEntry[]>([]);
@@ -74,8 +77,9 @@
 	let error = $state<string | null>(null);
 
 	// Restricted entries are for admins: everyone else asks only for the others (the rules check it).
-	$effect(() =>
-		listen<KnowledgeEntry>(
+	$effect(() => {
+		if (!canKnowledge) return;
+		return listen<KnowledgeEntry>(
 			$me?.role === 'admin'
 				? query(collection(db, 'knowledge'), orderBy('createdAt'), limit(200))
 				: query(
@@ -92,8 +96,8 @@
 				error = "Couldn't load the knowledge entries. Reload the page to try again.";
 				loading = false;
 			}
-		)
-	);
+		);
+	});
 
 	// The choices and the folder are defined in the backend (functions/src/lib/knowledge/config.ts).
 	let uses = $state<KnowledgeUseOption[]>([]);
@@ -106,6 +110,7 @@
 	/** Words of Always text Claude should get at most (ALWAYS_BUDGET_WORDS in the backend). */
 	let alwaysBudget = $state(0);
 	onMount(() => {
+		if (!canKnowledge) return;
 		callAction<{
 			uses: KnowledgeUseOption[];
 			types: KnowledgeOption[];
@@ -297,7 +302,7 @@
 	async function remove(e: KnowledgeEntry) {
 		if (
 			deletingId ||
-			!confirm(`Delete "${e.label || firstLine(e)}"? Claude stops using it. This cannot be undone.`)
+			!confirm(`Delete "${titleOf(e)}"? Claude stops using it. This cannot be undone.`)
 		)
 			return;
 		error = null;
@@ -311,12 +316,12 @@
 		}
 	}
 
-	const firstLine = (e: KnowledgeEntry) => e.description.split('\n').find((l) => l.trim()) ?? '';
-	// The opening lines as one paragraph (a first line often ends in ":"); the title is shown above.
+	// The opening lines as plain text, one paragraph (a first line often ends in ":"); the title is
+	// shown above, so without one the first line is skipped.
 	const excerpt = (e: KnowledgeEntry) =>
 		e.description
 			.split('\n')
-			.map((l) => l.trim())
+			.map(plainLine)
 			.filter(Boolean)
 			.slice(e.label ? 0 : 1, 4)
 			.join(' ')
@@ -330,33 +335,33 @@
 	};
 </script>
 
-<div
-	class="mx-auto mb-4 flex w-fit max-w-7xl rounded-lg border border-line/70 bg-white p-0.5"
-	role="tablist"
->
-	{#each tabs as [value, label] (value)}
-		<button
-			role="tab"
-			aria-selected={tab === value}
-			class="flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-semibold {tab === value
-				? 'bg-primary-600 text-white'
-				: 'text-ink-soft'}"
-			onclick={() => openTab(value)}
-		>
-			{label}
-			{#if value === 'gaps' && gaps.length}
-				<span
-					class="rounded-full px-1.5 text-xs {tab === value
-						? 'bg-white/25'
-						: 'bg-warning/15 text-warning'}"
-					title="Open gaps"
-				>
-					{gaps.length >= GAP_LIMIT ? `${GAP_LIMIT}+` : gaps.length}
-				</span>
-			{/if}
-		</button>
-	{/each}
-</div>
+{#if tabs.length > 1}<div
+		class="mx-auto mb-4 flex w-fit max-w-7xl rounded-lg border border-line/70 bg-white p-0.5"
+		role="tablist"
+	>
+		{#each tabs as [value, label] (value)}
+			<button
+				role="tab"
+				aria-selected={tab === value}
+				class="flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-semibold {tab === value
+					? 'bg-primary-600 text-white'
+					: 'text-ink-soft'}"
+				onclick={() => openTab(value)}
+			>
+				{label}
+				{#if value === 'gaps' && gaps.length}
+					<span
+						class="rounded-full px-1.5 text-xs {tab === value
+							? 'bg-white/25'
+							: 'bg-warning/15 text-warning'}"
+						title="Open gaps"
+					>
+						{gaps.length >= GAP_LIMIT ? `${GAP_LIMIT}+` : gaps.length}
+					</span>
+				{/if}
+			</button>
+		{/each}
+	</div>{/if}
 
 {#if tab === 'skills'}
 	<SkillsPanel />
@@ -509,7 +514,7 @@
 										title="Open the full text"
 										onclick={() => open(e)}
 									>
-										{e.label || firstLine(e)}
+										{titleOf(e)}
 									</button>
 									<p class="mt-0.5 line-clamp-2 text-xs text-ink-soft">{excerpt(e)}</p>
 									{#if e.useWhen}
@@ -558,7 +563,7 @@
 								<td class="px-3 py-3 whitespace-nowrap">
 									{types[typeIndex(e)]?.label ?? 'Other'}
 								</td>
-								<td class="px-3 py-3">
+								<td class="px-3 py-3 whitespace-nowrap">
 									<span
 										class="rounded px-1.5 py-0.5 text-xs font-semibold {e.audience === 'restricted'
 											? 'bg-danger/10 text-danger'
@@ -670,7 +675,7 @@
 	{alwaysBudget}
 />
 
-<Modal bind:open={previewOpen} title={preview?.label || 'Entry'} width="max-w-2xl">
+<Modal bind:open={previewOpen} title={preview ? titleOf(preview) : ''} width="max-w-2xl">
 	{#if preview}
 		<p class="text-sm whitespace-pre-wrap">{preview.description}</p>
 	{/if}

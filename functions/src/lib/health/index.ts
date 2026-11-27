@@ -32,10 +32,9 @@ export async function get() {
 		const old = c.availability === 'live' && stale(checked);
 		// What to do, in plain words; `detail` stays the technical answer.
 		let hint: string | null = s.status === 'ok' ? null : (s.hint ?? null);
-		if (c.availability === 'live' && !checked) hint = 'Press Check now.';
+		if (c.availability === 'live' && !checked) hint = 'Not checked yet: the hourly check tests it.';
 		else if (old && s.status !== 'error')
-			hint =
-				'The hourly check may have stopped: press Check now, and tell a developer if it stays old.';
+			hint = 'The hourly check may have stopped: tell a developer if this stays old.';
 		if (c.availability === 'live') {
 			if (s.status === 'error') level = 'error';
 			else if (s.status === 'ok' && !old) level = 'ok';
@@ -63,17 +62,21 @@ export async function get() {
 		const ran = ms(s.lastRunAt);
 		// A daily job that ran once and then stopped: the schedule may be broken.
 		const late = on && a.trigger === 'schedule' && !!ran && Date.now() - ran > RUN_STALE;
-		// Switched off is a warning: something the team expects may not be happening.
-		let level: Level = 'warning';
+		// Switched off is a warning when it is on by default (something the team expects may not be
+		// happening); one that is off by default (the portal import) is just off.
+		let level: Level = a.defaultEnabled ? 'warning' : 'off';
 		if (on && s.lastError) level = 'error';
-		else if (on && !late) level = 'ok';
+		else if (on && late) level = 'warning';
+		else if (on) level = 'ok';
 		return {
 			id: a.id,
 			name: a.name,
 			enabled: on,
 			level,
 			lastRunAt: ms(s.lastRunAt),
-			lastError: late ? `Hasn't run for over 2 days.` : (s.lastError ?? null),
+			lastError: s.lastError ?? null,
+			/** A scheduled automation that is on but hasn't run for 2 days: not a failure to resolve. */
+			late,
 			runs: s.runs ?? 0,
 			errors: s.errors ?? 0
 		};

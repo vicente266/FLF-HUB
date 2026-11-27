@@ -95,7 +95,7 @@ export interface Contact {
 
 export interface Activity {
 	id: string;
-	kind: 'created' | 'note' | 'stage' | 'assigned' | 'automation' | 'updated' | 'meeting';
+	kind: 'created' | 'note' | 'stage' | 'assigned' | 'automation' | 'updated' | 'meeting' | 'task';
 	text: string;
 	by: string;
 	at: unknown;

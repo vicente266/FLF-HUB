@@ -228,7 +228,7 @@ export const CONNECTORS: Connector[] = [
 		settings: [],
 		setup: [
 			'Developer only: `openssl rand -base64 48 | firebase functions:secrets:set FLF_MCP_KEY --data-file=-`, then deploy.',
-			'Developer only: put the `claudeMcp` URL + `/mcp` in `functions/.env` as FLF_CONNECTOR_URL and deploy again.',
+			'Developer only: put the `claudeMcp` URL + `/mcp` in `functions/.env.flfhub` as FLF_CONNECTOR_URL and deploy again.',
 			'Admin: give the people who may use Claude a group with "Claude — connect" (admins too).',
 			'claude.ai: an Owner adds it under Organization settings → Connectors → Add custom connector with that address; each person then clicks Connect.',
 			'Claude Code: `claude mcp add --transport http --scope user flf-hub <address>`, then `/mcp` to sign in.'

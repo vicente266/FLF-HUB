@@ -319,5 +319,11 @@
 </Modal>
 
 {#if canWrite && cfg.value}
-	<NewContactDialog bind:open={adding} config={cfg.value} type="partner" strategyId={addTo} />
+	<NewContactDialog
+		bind:open={adding}
+		config={cfg.value}
+		type="partner"
+		strategyId={addTo}
+		segment={strategies.find((x) => x.id === addTo)?.segment ?? ''}
+	/>
 {/if}
