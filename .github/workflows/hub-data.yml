@@ -1,0 +1,40 @@
+# One-off data changes to the live Hub (ops/changes/), applied once each, keyless as the deploy
+# account. Runs when a change lands on main, or by hand from the Actions tab.
+name: Hub data
+
+on:
+  push:
+    branches: [main]
+    paths: ['ops/**']
+  workflow_dispatch:
+
+concurrency:
+  group: hub-data
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  apply:
+    name: Apply data changes
+    if: github.ref == 'refs/heads/main' && github.repository == 'vicente266/FLF-HUB'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.FIREBASE_WIF_PROVIDER }}
+          service_account: ${{ vars.FIREBASE_DEPLOY_ACCOUNT }}
+      - name: Apply
+        run: |
+          npm ci --prefix functions
+          ln -s ../functions/node_modules ops/node_modules
+          node ops/apply.mjs

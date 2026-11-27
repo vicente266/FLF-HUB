@@ -116,6 +116,13 @@ Actions tab (**Deploy → Run workflow**).
   `CHECKLY_ACCOUNT_ID` (Checkly → Account settings → General); optional variable
   `CHECKLY_ALERT_EMAIL` for a failure email. See "Monitoring".
 
+## One-off data changes
+
+A change to the live data that no screen makes (a backfill, a fix, a record set up for someone) is a
+file in `ops/changes/` (`YYYY-MM-DD-what.mjs`, default export `(db, FieldValue) => summary`).
+Pushing it to `main` runs `.github/workflows/hub-data.yml`, which applies each file once, as the
+deploy account, and records it in `opsApplied/{file}`. Never edit a file that has run; add a new one.
+
 ## Monitoring
 
 Checkly watches from outside on the free Hobby plan. The URL monitors (website, portal login,
